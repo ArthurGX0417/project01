@@ -22,9 +22,15 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
+	// 驗證 StartTime 是否在未來
+	if rent.StartTime.Before(time.Now()) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "開始時間必須在未來"})
+		return
+	}
+
 	wifiVerified, err := services.VerifyWifi(rent.MemberID)
 	if err != nil {
-		log.Printf("Failed to verify WiFi: %v", err)
+		log.Printf("Failed to verify WiFi for member %d: %v", rent.MemberID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "WiFi 驗證失敗"})
 		return
 	}
@@ -34,9 +40,9 @@ func RentParkingSpot(c *gin.Context) {
 	}
 
 	if err := services.RentParkingSpot(&rent); err != nil {
-		log.Printf("Failed to rent parking spot: %v", err)
+		log.Printf("Failed to rent parking spot %d for member %d: %v", rent.SpotID, rent.MemberID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "租用車位失敗",
+			"error":   "租用車位失敗#pragma once",
 			"details": err.Error(),
 		})
 		return
@@ -44,14 +50,21 @@ func RentParkingSpot(c *gin.Context) {
 
 	// 預加載關聯數據，包括嵌套的 ParkingSpot.Member
 	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").First(&rent, rent.RentID).Error; err != nil {
-		log.Printf("Failed to preload rent data: %v", err)
+		log.Printf("Failed to preload rent data for rent ID %d: %v", rent.RentID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "載入租用資料失敗"})
 		return
 	}
 
+	// Fetch available days for the parking spot
+	availableDays, err := services.FetchAvailableDays(rent.SpotID)
+	if err != nil {
+		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
+		availableDays = []string{}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "車位租用成功",
-		"data":    rent.ToResponse(),
+		"data":    rent.ToResponse(availableDays),
 	})
 }
 
@@ -64,9 +77,10 @@ func GetRentRecords(c *gin.Context) {
 		return
 	}
 
-	rentResponses := make([]models.RentResponse, len(rents))
+	// Use SimpleRentResponse to reduce response size
+	rentResponses := make([]models.SimpleRentResponse, len(rents))
 	for i, rent := range rents {
-		rentResponses[i] = rent.ToResponse()
+		rentResponses[i] = rent.ToSimpleResponse()
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -119,6 +133,7 @@ func LeaveAndPay(c *gin.Context) {
 
 	// 檢查是否已結算
 	if rent.ActualEndTime != nil {
+		log.Printf("Attempted to settle already settled rent ID %d", id)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "租用已結算，無法再次結算"})
 		return
 	}
@@ -158,11 +173,18 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
+	// Fetch available days for the parking spot
+	availableDays, err := services.FetchAvailableDays(rent.SpotID)
+	if err != nil {
+		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
+		availableDays = []string{}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message":         "結算成功",
 		"actual_end_time": rent.ActualEndTime,
 		"total_cost":      totalCost,
-		"data":            rent.ToResponse(),
+		"data":            rent.ToResponse(availableDays),
 	})
 }
 
@@ -176,7 +198,7 @@ func GetRentByID(c *gin.Context) {
 		return
 	}
 
-	rent, err := services.GetRentByID(id)
+	rent, availableDays, err := services.GetRentByID(id)
 	if err != nil {
 		log.Printf("Failed to get rent: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查詢租賃記錄失敗"})
@@ -189,6 +211,6 @@ func GetRentByID(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "查詢成功",
-		"data":    rent.ToResponse(),
+		"data":    rent.ToResponse(availableDays),
 	})
 }

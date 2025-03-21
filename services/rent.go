@@ -1,8 +1,6 @@
-// services/rent.go
 package services
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -37,13 +35,22 @@ func RentParkingSpot(rent *models.Rent) error {
 		return fmt.Errorf("failed to check parking spot: %w", err)
 	}
 
-	// 檢查租用時間是否在車位可用時段內
-	var availableDays []string
-	if spot.AvailableDays != "" {
-		if err := json.Unmarshal([]byte(spot.AvailableDays), &availableDays); err != nil {
-			log.Printf("Failed to parse available_days for spot %d: %v", spot.SpotID, err)
-			return fmt.Errorf("failed to parse available days: %v", err)
-		}
+	// 使用 ParkingSpotAvailableDay 模型查詢可用日期
+	var availableDays []models.ParkingSpotAvailableDay
+	if err := database.DB.Where("spot_id = ?", spot.SpotID).Find(&availableDays).Error; err != nil {
+		log.Printf("Failed to query available days for spot %d: %v", spot.SpotID, err)
+		return fmt.Errorf("failed to query available days: %w", err)
+	}
+
+	// 檢查是否有可用日期
+	if len(availableDays) == 0 {
+		return fmt.Errorf("parking spot %d has no available days", spot.SpotID)
+	}
+
+	// 提取可用日期
+	days := make([]string, len(availableDays))
+	for i, day := range availableDays {
+		days[i] = day.Day
 	}
 
 	// 檢查租用時間段內的每一天是否都在 available_days 中
@@ -57,7 +64,7 @@ func RentParkingSpot(rent *models.Rent) error {
 	for !current.After(end) {
 		day := current.Weekday().String()
 		isAvailable := false
-		for _, availableDay := range availableDays {
+		for _, availableDay := range days {
 			if day == availableDay {
 				isAvailable = true
 				break
@@ -92,7 +99,7 @@ func RentParkingSpot(rent *models.Rent) error {
 func GetRentRecords() ([]models.Rent, error) {
 	var rents []models.Rent
 	// 查詢所有租用記錄
-	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").Find(&rents).Error; err != nil {
+	if err := database.DB.Find(&rents).Error; err != nil {
 		log.Printf("Failed to query rent records: %v", err)
 		return nil, err
 	}
@@ -173,7 +180,7 @@ func LeaveAndPay(rentID int, actualEndTime time.Time) (float64, error) {
 	if spot.SpotID != rent.SpotID {
 		tx.Rollback()
 		log.Printf("Inconsistent spot ID: rent.SpotID=%d, spot.SpotID=%d", rent.SpotID, spot.SpotID)
-		return 0, fmt.Errorf("inconsistent spot ID")
+		return 0, fmt.Errorf("inconsistent spot ID: expected %d, got %d", rent.SpotID, spot.SpotID)
 	}
 
 	// 檢查 actual_end_time 是否早於 start_time
@@ -273,7 +280,7 @@ func MonthlySettlement() error {
 		if spot.SpotID != rent.SpotID {
 			tx.Rollback()
 			log.Printf("Inconsistent spot ID: rent.SpotID=%d, spot.SpotID=%d", rent.SpotID, spot.SpotID)
-			return fmt.Errorf("inconsistent spot ID for rent %d", rent.RentID)
+			return fmt.Errorf("inconsistent spot ID for rent %d: expected %d, got %d", rent.RentID, rent.SpotID, spot.SpotID)
 		}
 
 		// 計算費用
@@ -335,7 +342,7 @@ func MonthlySettlement() error {
 }
 
 // GetRentByID 查詢特定租賃記錄
-func GetRentByID(id int) (*models.Rent, error) {
+func GetRentByID(id int) (*models.Rent, []string, error) {
 	var rent models.Rent
 	if err := database.DB.
 		Preload("Member").
@@ -344,10 +351,19 @@ func GetRentByID(id int) (*models.Rent, error) {
 		First(&rent, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("Rent with ID %d not found", id)
-			return nil, nil
+			return nil, nil, nil
 		}
 		log.Printf("Failed to get rent by ID %d: %v", id, err)
-		return nil, fmt.Errorf("database error: %w", err)
+		return nil, nil, fmt.Errorf("database error: %w", err)
 	}
-	return &rent, nil
+
+	// Fetch available days for the parking spot
+	availableDays, err := FetchAvailableDays(rent.SpotID)
+	if err != nil {
+		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
+		// Continue with empty days to avoid failing the entire request
+		availableDays = []string{}
+	}
+
+	return &rent, availableDays, nil
 }

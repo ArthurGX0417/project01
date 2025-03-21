@@ -3,12 +3,20 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"project01/database"
 	"project01/models"
 	"project01/services"
+	"regexp"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
+
+// 電子郵件驗證 regex
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+
+// 電話驗證字串 (例如：10 位數)
+var phoneRegex = regexp.MustCompile(`^[0-9]{10}$`)
 
 // 註冊會員資料檢查
 func RegisterMember(c *gin.Context) {
@@ -16,6 +24,24 @@ func RegisterMember(c *gin.Context) {
 	if err := c.ShouldBindJSON(&member); err != nil {
 		log.Printf("Invalid input data: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "無效的輸入資料"})
+		return
+	}
+
+	// 驗證電子郵件
+	if member.Email == "" || !emailRegex.MatchString(member.Email) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "請提供有效的電子郵件地址"})
+		return
+	}
+
+	// 驗證電話
+	if member.Phone == "" || !phoneRegex.MatchString(member.Phone) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "請提供有效的電話號碼（10位數字）"})
+		return
+	}
+
+	// 驗證密碼（例如，最少 8 個字元，至少一個字母和一個數字）
+	if len(member.Password) < 8 || !regexp.MustCompile(`[a-zA-Z]`).MatchString(member.Password) || !regexp.MustCompile(`[0-9]`).MatchString(member.Password) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "密碼必須至少8個字符，包含字母和數字"})
 		return
 	}
 
@@ -29,8 +55,19 @@ func RegisterMember(c *gin.Context) {
 		return
 	}
 
+	// 檢查現有的電子郵件或電話
+	var existingMember models.Member
+	if err := database.DB.Where("email = ?", member.Email).First(&existingMember).Error; err == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "該電子郵件已被註冊"})
+		return
+	}
+	if err := database.DB.Where("phone = ?", member.Phone).First(&existingMember).Error; err == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "該電話號碼已被註冊"})
+		return
+	}
+
 	if err := services.RegisterMember(&member); err != nil {
-		log.Printf("Failed to register member: %v", err)
+		log.Printf("Failed to register member with email %s and phone %s: %v", member.Email, member.Phone, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -61,10 +98,28 @@ func LoginMember(c *gin.Context) {
 		return
 	}
 
+	// 驗證電子郵件（如有提供
+	if loginData.Email != "" && !emailRegex.MatchString(loginData.Email) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "請提供有效的電子郵件地址"})
+		return
+	}
+
+	// 驗證電話（如有提供
+	if loginData.Phone != "" && !phoneRegex.MatchString(loginData.Phone) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "請提供有效的電話號碼（10位數字）"})
+		return
+	}
+
+	// 驗證密碼
+	if len(loginData.Password) < 8 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "密碼格式錯誤"})
+		return
+	}
+
 	// 驗證登入憑證
 	member, err := services.LoginMember(loginData.Email, loginData.Phone, loginData.Password)
 	if err != nil {
-		log.Printf("Login failed: %v", err)
+		log.Printf("Login failed for email %s or phone %s: %v", loginData.Email, loginData.Phone, err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "登入失敗，檢查電子郵件、電話或密碼"})
 		return
 	}
@@ -206,9 +261,32 @@ func GetMemberHistory(c *gin.Context) {
 		return
 	}
 
+	// Fetch all available days for all parking spots in a single query
+	spotIDs := make([]int, len(rents))
+	for i, rent := range rents {
+		spotIDs[i] = rent.SpotID
+	}
+
+	var availableDaysRecords []models.ParkingSpotAvailableDay
+	availableDaysMap := make(map[int][]string)
+	if len(spotIDs) > 0 {
+		if err := database.DB.Where("spot_id IN ?", spotIDs).Find(&availableDaysRecords).Error; err != nil {
+			log.Printf("Failed to fetch available days for spots: %v", err)
+			// Continue with empty days to avoid failing the entire request
+			availableDaysRecords = []models.ParkingSpotAvailableDay{}
+		}
+		for _, record := range availableDaysRecords {
+			availableDaysMap[record.SpotID] = append(availableDaysMap[record.SpotID], record.Day)
+		}
+	}
+
 	rentResponses := make([]models.RentResponse, len(rents))
 	for i, rent := range rents {
-		rentResponses[i] = rent.ToResponse()
+		availableDays := availableDaysMap[rent.SpotID]
+		if availableDays == nil {
+			availableDays = []string{}
+		}
+		rentResponses[i] = rent.ToResponse(availableDays)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

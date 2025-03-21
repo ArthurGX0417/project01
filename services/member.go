@@ -11,8 +11,24 @@ import (
 	"gorm.io/gorm"
 )
 
-// 註冊會員
+// RegisterMember 註冊會員
 func RegisterMember(member *models.Member) error {
+	// 檢查是否有重複的 email 或 phone
+	var existingMember models.Member
+	if err := database.DB.Where("email = ?", member.Email).First(&existingMember).Error; err == nil {
+		return fmt.Errorf("email %s is already in use", member.Email)
+	} else if err != gorm.ErrRecordNotFound {
+		log.Printf("Failed to check for duplicate email: %v", err)
+		return fmt.Errorf("failed to check for duplicate email: %w", err)
+	}
+
+	if err := database.DB.Where("phone = ?", member.Phone).First(&existingMember).Error; err == nil {
+		return fmt.Errorf("phone %s is already in use", member.Phone)
+	} else if err != gorm.ErrRecordNotFound {
+		log.Printf("Failed to check for duplicate phone: %v", err)
+		return fmt.Errorf("failed to check for duplicate phone: %w", err)
+	}
+
 	// 驗證 payment_method 和 role
 	if member.PaymentMethod != "credit_card" && member.PaymentMethod != "e_wallet" {
 		return fmt.Errorf("invalid payment_method: must be 'credit_card' or 'e_wallet'")
@@ -21,7 +37,7 @@ func RegisterMember(member *models.Member) error {
 		return fmt.Errorf("invalid role: must be 'shared_owner' or 'renter'")
 	}
 
-	// 哈希密碼，雜湊
+	// 哈希密碼
 	hashedPassword, err := utils.HashPassword(member.Password)
 	if err != nil {
 		log.Printf("Failed to hash password: %v", err)
@@ -42,12 +58,14 @@ func RegisterMember(member *models.Member) error {
 	// 使用 GORM 插入數據
 	if err := database.DB.Create(member).Error; err != nil {
 		log.Printf("Failed to register member: %v", err)
-		return err
+		return fmt.Errorf("failed to register member: %w", err)
 	}
+
+	log.Printf("Successfully registered member with ID %d", member.MemberID)
 	return nil
 }
 
-// 登入會員
+// LoginMember 登入會員
 func LoginMember(email, phone, password string) (*models.Member, error) {
 	var member models.Member
 	var err error
@@ -62,8 +80,12 @@ func LoginMember(email, phone, password string) (*models.Member, error) {
 	}
 
 	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			log.Printf("Member with email %s or phone %s not found", email, phone)
+			return nil, fmt.Errorf("member not found")
+		}
 		log.Printf("Failed to login member: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to login member: %w", err)
 	}
 
 	// 驗證密碼
@@ -72,32 +94,23 @@ func LoginMember(email, phone, password string) (*models.Member, error) {
 		return nil, fmt.Errorf("invalid password")
 	}
 
+	log.Printf("Member with ID %d logged in successfully", member.MemberID)
 	return &member, nil
 }
 
-// 根據ID查詢會員
+// GetMemberByID 根據ID查詢會員
 func GetMemberByID(id int) (*models.Member, error) {
 	var member models.Member
 	if err := database.DB.
-		Preload("ParkingSpots", func(db *gorm.DB) *gorm.DB {
-			return db.Preload("Member").Preload("Rents", func(db *gorm.DB) *gorm.DB {
-				return db.Preload("Member").Preload("ParkingSpot", func(db *gorm.DB) *gorm.DB {
-					return db.Preload("Member")
-				})
-			})
-		}).
-		Preload("Rents", func(db *gorm.DB) *gorm.DB {
-			return db.Preload("Member").Preload("ParkingSpot", func(db *gorm.DB) *gorm.DB {
-				return db.Preload("Member")
-			})
-		}).
+		Preload("ParkingSpots").
+		Preload("Rents").
 		First(&member, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			log.Printf("Member with ID %d not found", id)
 			return nil, nil
 		}
-		log.Printf("Failed to get member by ID: %v", err)
-		return nil, err
+		log.Printf("Failed to get member by ID %d: %v", id, err)
+		return nil, fmt.Errorf("failed to get member by ID %d: %w", id, err)
 	}
 
 	// 解密 payment_info
@@ -111,32 +124,17 @@ func GetMemberByID(id int) (*models.Member, error) {
 		}
 	}
 
+	log.Printf("Successfully retrieved member with ID %d", id)
 	return &member, nil
 }
 
-// 查詢所有會員
+// GetAllMembers 查詢所有會員
 func GetAllMembers() ([]models.Member, error) {
 	var members []models.Member
-	if err := database.DB.
-		Preload("ParkingSpots", func(db *gorm.DB) *gorm.DB {
-			return db.Preload("Member").Preload("Rents", func(db *gorm.DB) *gorm.DB {
-				return db.Preload("Member").Preload("ParkingSpot", func(db *gorm.DB) *gorm.DB {
-					return db.Preload("Member")
-				})
-			})
-		}).
-		Preload("Rents", func(db *gorm.DB) *gorm.DB {
-			return db.Preload("Member").Preload("ParkingSpot", func(db *gorm.DB) *gorm.DB {
-				return db.Preload("Member").Preload("Rents", func(db *gorm.DB) *gorm.DB {
-					return db.Preload("Member").Preload("ParkingSpot", func(db *gorm.DB) *gorm.DB {
-						return db.Preload("Member")
-					})
-				})
-			})
-		}).
-		Find(&members).Error; err != nil {
+	// No preloading since SimpleMemberResponse doesn't need ParkingSpots or Rents
+	if err := database.DB.Find(&members).Error; err != nil {
 		log.Printf("Failed to query all members: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to query all members: %w", err)
 	}
 
 	for i := range members {
@@ -156,19 +154,21 @@ func GetAllMembers() ([]models.Member, error) {
 		}
 	}
 
+	log.Printf("Successfully retrieved %d members", len(members))
 	return members, nil
 }
 
-// 更新某ID會員資訊
+// UpdateMember 更新某ID會員資訊
 func UpdateMember(id int, updatedFields map[string]interface{}) error {
 	var member models.Member
 	// 檢查會員是否存在
 	if err := database.DB.First(&member, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
+			log.Printf("Member with ID %d not found", id)
 			return fmt.Errorf("member with ID %d not found", id)
 		}
 		log.Printf("Failed to find member: %v", err)
-		return err
+		return fmt.Errorf("failed to find member with ID %d: %w", id, err)
 	}
 
 	// 映射 JSON 字段名到資料庫列名
@@ -181,7 +181,19 @@ func UpdateMember(id int, updatedFields map[string]interface{}) error {
 		case "name":
 			mappedFields["name"] = value
 		case "phone":
-			mappedFields["phone"] = value
+			phoneStr, ok := value.(string)
+			if !ok {
+				return fmt.Errorf("invalid phone type: must be a string")
+			}
+			// 檢查是否有重複的 phone
+			var existingMember models.Member
+			if err := database.DB.Where("phone = ? AND member_id != ?", phoneStr, id).First(&existingMember).Error; err == nil {
+				return fmt.Errorf("phone %s is already in use", phoneStr)
+			} else if err != gorm.ErrRecordNotFound {
+				log.Printf("Failed to check for duplicate phone: %v", err)
+				return fmt.Errorf("failed to check for duplicate phone: %w", err)
+			}
+			mappedFields["phone"] = phoneStr
 		case "password":
 			passwordStr, ok := value.(string)
 			if !ok {
@@ -231,7 +243,19 @@ func UpdateMember(id int, updatedFields map[string]interface{}) error {
 		case "car_model":
 			mappedFields["car_model"] = value
 		case "email":
-			mappedFields["email"] = value
+			emailStr, ok := value.(string)
+			if !ok {
+				return fmt.Errorf("invalid email type: must be a string")
+			}
+			// 檢查是否有重複的 email
+			var existingMember models.Member
+			if err := database.DB.Where("email = ? AND member_id != ?", emailStr, id).First(&existingMember).Error; err == nil {
+				return fmt.Errorf("email %s is already in use", emailStr)
+			} else if err != gorm.ErrRecordNotFound {
+				log.Printf("Failed to check for duplicate email: %v", err)
+				return fmt.Errorf("failed to check for duplicate email: %w", err)
+			}
+			mappedFields["email"] = emailStr
 		case "wifi_verified":
 			wifiVerified, ok := value.(bool)
 			if !ok {
@@ -246,52 +270,81 @@ func UpdateMember(id int, updatedFields map[string]interface{}) error {
 	// 使用 GORM 更新數據
 	if err := database.DB.Model(&member).Updates(mappedFields).Error; err != nil {
 		log.Printf("Failed to update member with fields %v: %v", mappedFields, err)
-		return err
+		return fmt.Errorf("failed to update member with ID %d: %w", id, err)
 	}
+
+	log.Printf("Successfully updated member with ID %d", id)
 	return nil
 }
 
-// 刪除會員
+// DeleteMember 刪除會員
 func DeleteMember(id int) error {
+	// Start a transaction
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			log.Printf("Panic occurred during member deletion: %v", r)
+		}
+	}()
+
 	var member models.Member
-	if err := database.DB.First(&member, id).Error; err != nil {
+	if err := tx.First(&member, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			log.Printf("Member with ID %d not found", id)
-			return fmt.Errorf("會員不存在")
+			tx.Rollback()
+			return fmt.Errorf("member with ID %d not found", id)
 		}
 		log.Printf("Failed to find member: %v", err)
-		return fmt.Errorf("查詢會員失敗: %v", err)
+		tx.Rollback()
+		return fmt.Errorf("failed to find member with ID %d: %w", id, err)
 	}
 
 	// 刪除相關的 rents
-	if err := database.DB.Where("member_id = ?", id).Delete(&models.Rent{}).Error; err != nil {
+	if err := tx.Where("member_id = ?", id).Delete(&models.Rent{}).Error; err != nil {
+		tx.Rollback()
 		log.Printf("Failed to delete rents for member %d: %v", id, err)
-		return fmt.Errorf("刪除租賃記錄失敗: %v", err)
+		return fmt.Errorf("failed to delete rents for member %d: %w", id, err)
 	}
 
 	// 刪除相關的 parking_spots
-	if err := database.DB.Where("member_id = ?", id).Delete(&models.ParkingSpot{}).Error; err != nil {
+	if err := tx.Where("member_id = ?", id).Delete(&models.ParkingSpot{}).Error; err != nil {
+		tx.Rollback()
 		log.Printf("Failed to delete parking spots for member %d: %v", id, err)
-		return fmt.Errorf("刪除停車位失敗: %v", err)
+		return fmt.Errorf("failed to delete parking spots for member %d: %w", id, err)
 	}
 
 	// 刪除會員
-	if err := database.DB.Delete(&member).Error; err != nil {
+	if err := tx.Delete(&member).Error; err != nil {
+		tx.Rollback()
 		log.Printf("Failed to delete member: %v", err)
-		return fmt.Errorf("刪除會員失敗: %v", err)
+		return fmt.Errorf("failed to delete member with ID %d: %w", id, err)
 	}
 
+	// 提交事務
+	if err := tx.Commit().Error; err != nil {
+		log.Printf("Failed to commit transaction for member deletion: %v", err)
+		return fmt.Errorf("failed to commit transaction for member deletion: %w", err)
+	}
+
+	log.Printf("Successfully deleted member with ID %d", id)
 	return nil
 }
 
-// Wifi驗證
+// VerifyWifi Wifi驗證
 func VerifyWifi(memberID int) (bool, error) {
 	var member models.Member
 	// 使用 GORM 查詢 wifi_verified
 	if err := database.DB.Select("wifi_verified").First(&member, memberID).Error; err != nil {
-		log.Printf("Failed to verify WiFi: %v", err)
-		return false, err
+		if err == gorm.ErrRecordNotFound {
+			log.Printf("Member with ID %d not found", memberID)
+			return false, fmt.Errorf("member with ID %d not found", memberID)
+		}
+		log.Printf("Failed to verify WiFi for member %d: %v", memberID, err)
+		return false, fmt.Errorf("failed to verify WiFi for member %d: %w", memberID, err)
 	}
+
+	log.Printf("Successfully verified WiFi for member %d: %v", memberID, member.WifiVerified)
 	return member.WifiVerified, nil
 }
 
@@ -305,7 +358,9 @@ func GetMemberRentHistory(memberID int) ([]models.Rent, error) {
 		Where("member_id = ?", memberID).
 		Find(&rents).Error; err != nil {
 		log.Printf("Failed to get rent history for member %d: %v", memberID, err)
-		return nil, err
+		return nil, fmt.Errorf("failed to get rent history for member %d: %w", memberID, err)
 	}
+
+	log.Printf("Successfully retrieved %d rent records for member %d", len(rents), memberID)
 	return rents, nil
 }

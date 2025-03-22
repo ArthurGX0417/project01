@@ -268,15 +268,14 @@ func GetMemberHistory(c *gin.Context) {
 	}
 
 	var availableDaysRecords []models.ParkingSpotAvailableDay
-	availableDaysMap := make(map[int][]models.ParkingSpotAvailableDay) // 修改為 map[int][]models.ParkingSpotAvailableDay
+	availableDaysMap := make(map[int][]models.ParkingSpotAvailableDay)
 	if len(spotIDs) > 0 {
 		if err := database.DB.Where("spot_id IN ?", spotIDs).Find(&availableDaysRecords).Error; err != nil {
 			log.Printf("Failed to fetch available days for spots: %v", err)
-			// Continue with empty days to avoid failing the entire request
 			availableDaysRecords = []models.ParkingSpotAvailableDay{}
 		}
 		for _, record := range availableDaysRecords {
-			availableDaysMap[record.SpotID] = append(availableDaysMap[record.SpotID], record) // 存儲整個 record
+			availableDaysMap[record.SpotID] = append(availableDaysMap[record.SpotID], record)
 		}
 	}
 
@@ -284,7 +283,7 @@ func GetMemberHistory(c *gin.Context) {
 	for i, rent := range rents {
 		availableDays := availableDaysMap[rent.SpotID]
 		if availableDays == nil {
-			availableDays = []models.ParkingSpotAvailableDay{} // 修改為 []models.ParkingSpotAvailableDay
+			availableDays = []models.ParkingSpotAvailableDay{}
 		}
 		rentResponses[i] = rent.ToResponse(availableDays)
 	}

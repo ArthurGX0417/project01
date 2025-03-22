@@ -24,6 +24,7 @@ func Path(router *gin.RouterGroup) {
 			c.JSON(200, gin.H{"message": "pong"})
 		})
 
+		// 往後端傳資料不要用GET(蘇老師交代)
 		// 會員路由
 		members := v1.Group("/members")
 		{

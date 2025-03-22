@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// FetchAvailableDays fetches the available days for a parking spot
+// FetchAvailableDays 取得停車位的可用天數
 func FetchAvailableDays(spotID int) ([]models.ParkingSpotAvailableDay, error) {
 	var availableDays []models.ParkingSpotAvailableDay
 	if err := database.DB.Where("parking_spot_id = ?", spotID).Find(&availableDays).Error; err != nil {

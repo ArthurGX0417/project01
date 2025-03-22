@@ -82,7 +82,7 @@ func LoginMember(email, phone, password string) (*models.Member, error) {
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			log.Printf("Member with email %s or phone %s not found", email, phone)
-			return nil, fmt.Errorf("member not found")
+			return nil, fmt.Errorf("無效的電子郵件/電話或密碼")
 		}
 		log.Printf("Failed to login member: %v", err)
 		return nil, fmt.Errorf("failed to login member: %w", err)
@@ -91,7 +91,7 @@ func LoginMember(email, phone, password string) (*models.Member, error) {
 	// 驗證密碼
 	if !utils.CheckPasswordHash(password, member.Password) {
 		log.Printf("Invalid password for email %s or phone %s", email, phone)
-		return nil, fmt.Errorf("invalid password")
+		return nil, fmt.Errorf("無效的電子郵件/電話或密碼")
 	}
 
 	log.Printf("Member with ID %d logged in successfully", member.MemberID)

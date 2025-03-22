@@ -6,6 +6,7 @@ import (
 	"project01/database"
 	"project01/routes"
 	"project01/services"
+	"project01/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -19,21 +20,23 @@ func main() {
 	}
 	log.Println(".env file loaded successfully")
 
-	// 檢查 AES_KEY 是否加載成功
-	aesKey := os.Getenv("AES_KEY")
-	if aesKey == "" {
-		log.Fatal("AES_KEY environment variable is not set after loading .env file. Please check the .env file content.")
+	// 調用 AES_KEY 是否加載成功
+	if err := utils.InitCrypto(); err != nil {
+		log.Fatalf("Failed to initialize crypto: %v", err)
 	}
-	if len(aesKey) != 32 {
-		log.Fatalf("AES_KEY must be 32 bytes long, got %d bytes", len(aesKey))
-	}
-	log.Printf("AES_KEY loaded successfully (length: %d bytes)", len(aesKey))
+	log.Println("Crypto initialized successfully")
 
 	// 初始化資料庫
 	database.InitDB()
 
 	// 設置 Gin 模式為 release
 	gin.SetMode(gin.ReleaseMode)
+	ginMode := os.Getenv("GIN_MODE")
+	if ginMode == "" {
+		ginMode = gin.ReleaseMode
+	}
+	gin.SetMode(ginMode)
+	log.Printf("Gin mode set to %s", ginMode)
 
 	// 初始化 Gin 路由器
 	r := gin.Default()

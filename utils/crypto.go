@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 
@@ -16,7 +17,7 @@ import (
 func HashPassword(password string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to hash password: %w", err)
 	}
 	return string(bytes), nil
 }
@@ -99,4 +100,16 @@ func DecryptPaymentInfo(cipherText string) (string, error) {
 	}
 
 	return string(plainText), nil
+}
+
+// 檢查 AES_KEY 是否加載成功
+func InitCrypto() error {
+	aesKey := os.Getenv("AES_KEY")
+	if aesKey == "" {
+		return fmt.Errorf("AES_KEY environment variable is not set")
+	}
+	if len(aesKey) != 32 {
+		return fmt.Errorf("AES_KEY must be 32 bytes long, got %d bytes", len(aesKey))
+	}
+	return nil
 }

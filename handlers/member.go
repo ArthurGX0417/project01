@@ -98,13 +98,13 @@ func LoginMember(c *gin.Context) {
 		return
 	}
 
-	// 驗證電子郵件（如有提供
+	// 驗證電子郵件
 	if loginData.Email != "" && !emailRegex.MatchString(loginData.Email) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "請提供有效的電子郵件地址"})
 		return
 	}
 
-	// 驗證電話（如有提供
+	// 驗證電話
 	if loginData.Phone != "" && !phoneRegex.MatchString(loginData.Phone) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "請提供有效的電話號碼（10位數字）"})
 		return
@@ -261,7 +261,7 @@ func GetMemberHistory(c *gin.Context) {
 		return
 	}
 
-	// Fetch all available days for all parking spots in a single query
+	// 一次查詢即可取得所有停車位的所有可用天數
 	spotIDs := make([]int, len(rents))
 	for i, rent := range rents {
 		spotIDs[i] = rent.SpotID

@@ -14,31 +14,43 @@ type ParkingSpot struct {
 	Latitude         float64                   `json:"latitude" gorm:"type:decimal(9,6);default:0.0" binding:"gte=-90,lte=90"`
 	Member           Member                    `json:"-" gorm:"foreignKey:member_id;references:MemberID"`
 	Rents            []Rent                    `json:"-" gorm:"foreignKey:spot_id;references:SpotID"`
-	AvailableDays    []ParkingSpotAvailableDay `json:"-" gorm:"foreignKey:SpotID;references:SpotID"` // Relationship field
+	AvailableDays    []ParkingSpotAvailableDay `json:"-" gorm:"foreignKey:SpotID;references:SpotID"`
+}
+
+type AvailableDayResponse struct {
+	Date        string `json:"date"`
+	IsAvailable bool   `json:"is_available"`
 }
 
 type ParkingSpotResponse struct {
-	SpotID           int            `json:"spot_id"`
-	MemberID         int            `json:"member_id"`
-	ParkingType      string         `json:"parking_type"`
-	FloorLevel       string         `json:"floor_level"`
-	Location         string         `json:"location"`
-	PricingType      string         `json:"pricing_type"`
-	Status           string         `json:"status"`
-	PricePerHalfHour float64        `json:"price_per_half_hour"`
-	DailyMaxPrice    float64        `json:"daily_max_price"`
-	Longitude        float64        `json:"longitude"`
-	Latitude         float64        `json:"latitude"`
-	AvailableDays    []string       `json:"available_days"`
-	Member           MemberResponse `json:"member"`
-	Rents            []RentResponse `json:"rents"`
+	SpotID           int                    `json:"spot_id"`
+	MemberID         int                    `json:"member_id"`
+	ParkingType      string                 `json:"parking_type"`
+	FloorLevel       string                 `json:"floor_level"`
+	Location         string                 `json:"location"`
+	PricingType      string                 `json:"pricing_type"`
+	Status           string                 `json:"status"`
+	PricePerHalfHour float64                `json:"price_per_half_hour"`
+	DailyMaxPrice    float64                `json:"daily_max_price"`
+	Longitude        float64                `json:"longitude"`
+	Latitude         float64                `json:"latitude"`
+	AvailableDays    []AvailableDayResponse `json:"available_days"`
+	Member           MemberResponse         `json:"member"`
+	Rents            []RentResponse         `json:"rents"`
 }
 
-func (p *ParkingSpot) ToResponse(availableDays []string) ParkingSpotResponse {
+func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay) ParkingSpotResponse {
 	rents := make([]RentResponse, len(p.Rents))
 	for i, rent := range p.Rents {
-		// Since the rent's SpotID should match p.SpotID, we can reuse the same availableDays
-		rents[i] = rent.ToResponse(availableDays)
+		rents[i] = rent.ToResponse(nil) // Pass nil since RentResponse doesn't need availableDays
+	}
+
+	days := make([]AvailableDayResponse, len(availableDays))
+	for i, day := range availableDays {
+		days[i] = AvailableDayResponse{
+			Date:        day.AvailableDate,
+			IsAvailable: day.IsAvailable,
+		}
 	}
 
 	return ParkingSpotResponse{
@@ -53,7 +65,7 @@ func (p *ParkingSpot) ToResponse(availableDays []string) ParkingSpotResponse {
 		DailyMaxPrice:    p.DailyMaxPrice,
 		Longitude:        p.Longitude,
 		Latitude:         p.Latitude,
-		AvailableDays:    availableDays,
+		AvailableDays:    days,
 		Member:           p.Member.ToResponse(),
 		Rents:            rents,
 	}

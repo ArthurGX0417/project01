@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// 租車位資料檢查
+// RentParkingSpot 租車位資料檢查
 func RentParkingSpot(c *gin.Context) {
 	var rent models.Rent
 	if err := c.ShouldBindJSON(&rent); err != nil {
@@ -42,7 +42,7 @@ func RentParkingSpot(c *gin.Context) {
 	if err := services.RentParkingSpot(&rent); err != nil {
 		log.Printf("Failed to rent parking spot %d for member %d: %v", rent.SpotID, rent.MemberID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "租用車位失敗#pragma once",
+			"error":   "租用車位失敗",
 			"details": err.Error(),
 		})
 		return
@@ -59,7 +59,7 @@ func RentParkingSpot(c *gin.Context) {
 	availableDays, err := services.FetchAvailableDays(rent.SpotID)
 	if err != nil {
 		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
-		availableDays = []string{}
+		availableDays = []models.ParkingSpotAvailableDay{}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -68,7 +68,7 @@ func RentParkingSpot(c *gin.Context) {
 	})
 }
 
-// 查詢租用紀錄資料檢查
+// GetRentRecords 查詢租用紀錄資料檢查
 func GetRentRecords(c *gin.Context) {
 	rents, err := services.GetRentRecords()
 	if err != nil {
@@ -89,7 +89,7 @@ func GetRentRecords(c *gin.Context) {
 	})
 }
 
-// 取消租用資料檢查
+// CancelRent 取消租用資料檢查
 func CancelRent(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -110,7 +110,7 @@ func CancelRent(c *gin.Context) {
 	})
 }
 
-// 離開和付款資料檢查
+// LeaveAndPay 離開和付款資料檢查
 func LeaveAndPay(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -177,7 +177,7 @@ func LeaveAndPay(c *gin.Context) {
 	availableDays, err := services.FetchAvailableDays(rent.SpotID)
 	if err != nil {
 		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
-		availableDays = []string{}
+		availableDays = []models.ParkingSpotAvailableDay{}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

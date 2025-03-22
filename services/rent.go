@@ -50,7 +50,7 @@ func RentParkingSpot(rent *models.Rent) error {
 	// 提取可用日期
 	days := make([]string, len(availableDays))
 	for i, day := range availableDays {
-		days[i] = day.Day
+		days[i] = day.AvailableDate
 	}
 
 	// 檢查租用時間段內的每一天是否都在 available_days 中
@@ -342,7 +342,7 @@ func MonthlySettlement() error {
 }
 
 // GetRentByID 查詢特定租賃記錄
-func GetRentByID(id int) (*models.Rent, []string, error) {
+func GetRentByID(id int) (*models.Rent, []models.ParkingSpotAvailableDay, error) {
 	var rent models.Rent
 	if err := database.DB.
 		Preload("Member").
@@ -362,7 +362,7 @@ func GetRentByID(id int) (*models.Rent, []string, error) {
 	if err != nil {
 		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
 		// Continue with empty days to avoid failing the entire request
-		availableDays = []string{}
+		availableDays = []models.ParkingSpotAvailableDay{}
 	}
 
 	return &rent, availableDays, nil

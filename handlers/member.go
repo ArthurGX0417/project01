@@ -276,7 +276,7 @@ func GetMemberHistory(c *gin.Context) {
 			availableDaysRecords = []models.ParkingSpotAvailableDay{}
 		}
 		for _, record := range availableDaysRecords {
-			availableDaysMap[record.SpotID] = append(availableDaysMap[record.SpotID], record.Day)
+			availableDaysMap[record.SpotID] = append(availableDaysMap[record.SpotID], record.AvailableDate)
 		}
 	}
 

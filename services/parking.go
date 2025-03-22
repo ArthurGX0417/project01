@@ -13,28 +13,22 @@ import (
 )
 
 // FetchAvailableDays fetches the available days for a parking spot
-func FetchAvailableDays(spotID int) ([]string, error) {
+func FetchAvailableDays(spotID int) ([]models.ParkingSpotAvailableDay, error) {
 	var availableDays []models.ParkingSpotAvailableDay
-	if err := database.DB.Where("spot_id = ?", spotID).Find(&availableDays).Error; err != nil {
+	if err := database.DB.Where("parking_spot_id = ?", spotID).Find(&availableDays).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch available days for spot %d: %w", spotID, err)
 	}
-	days := make([]string, len(availableDays))
-	for i, day := range availableDays {
-		days[i] = day.Day
-	}
-	return days, nil
+	return availableDays, nil
 }
 
 // ShareParkingSpot 共享停車位
-func ShareParkingSpot(spot *models.ParkingSpot, availableDays []string) error {
-	// 驗證 ENUM 值
+func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSpotAvailableDay) error {
 	if spot.ParkingType != "mechanical" && spot.ParkingType != "flat" {
 		return fmt.Errorf("invalid parking_type: must be 'mechanical' or 'flat'")
 	}
 	if spot.PricingType != "monthly" && spot.PricingType != "hourly" {
 		return fmt.Errorf("invalid pricing_type: must be 'monthly' or 'hourly'")
 	}
-	// 如果未設置 status，設置預設值為 "idle"
 	if spot.Status == "" {
 		spot.Status = "idle"
 	}
@@ -42,31 +36,20 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []string) error {
 		return fmt.Errorf("invalid status: must be 'in_use' or 'idle'")
 	}
 
-	// 驗證 available_days
 	if len(availableDays) == 0 {
 		return fmt.Errorf("available_days cannot be empty")
 	}
-	seenDays := make(map[string]bool)
+	seenDates := make(map[string]bool)
 	for _, day := range availableDays {
-		validDays := map[string]bool{
-			"Monday":    true,
-			"Tuesday":   true,
-			"Wednesday": true,
-			"Thursday":  true,
-			"Friday":    true,
-			"Saturday":  true,
-			"Sunday":    true,
+		if _, err := time.Parse("2006-01-02", day.AvailableDate); err != nil {
+			return fmt.Errorf("invalid date format in available_days: %s", day.AvailableDate)
 		}
-		if !validDays[day] {
-			return fmt.Errorf("invalid day in available_days: %s", day)
+		if seenDates[day.AvailableDate] {
+			return fmt.Errorf("duplicate date in available_days: %s", day.AvailableDate)
 		}
-		if seenDays[day] {
-			return fmt.Errorf("duplicate day in available_days: %s", day)
-		}
-		seenDays[day] = true
+		seenDates[day.AvailableDate] = true
 	}
 
-	// 驗證 member_id 是否存在
 	var member models.Member
 	if err := database.DB.Where("member_id = ?", spot.MemberID).First(&member).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -76,12 +59,10 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []string) error {
 		return fmt.Errorf("failed to verify member: %w", err)
 	}
 
-	// 驗證 member 是否為 shared_owner
 	if member.Role != "shared_owner" {
 		return fmt.Errorf("only shared_owner can share parking spots")
 	}
 
-	// 設置費率預設值
 	if spot.PricePerHalfHour == 0 {
 		spot.PricePerHalfHour = 20
 	}
@@ -89,29 +70,25 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []string) error {
 		spot.DailyMaxPrice = 300
 	}
 
-	// Start a transaction
 	tx := database.DB.Begin()
 
-	// 使用 GORM 插入車位
 	if err := tx.Create(spot).Error; err != nil {
 		tx.Rollback()
 		log.Printf("Failed to share parking spot: %v", err)
 		return fmt.Errorf("failed to create parking spot: %w", err)
 	}
 
-	// Insert available days into parking_spot_available_days
 	for _, day := range availableDays {
-		if err := tx.Create(&models.ParkingSpotAvailableDay{SpotID: spot.SpotID, Day: day}).Error; err != nil {
+		day.SpotID = spot.SpotID
+		if err := tx.Create(&day).Error; err != nil {
 			tx.Rollback()
-			// Check if the error is due to a duplicate key (unique constraint violation)
 			if gormErr, ok := err.(*mysql.MySQLError); ok && gormErr.Number == 1062 {
-				return fmt.Errorf("duplicate entry for spot_id %d and day %s", spot.SpotID, day)
+				return fmt.Errorf("duplicate entry for spot_id %d and date %s", spot.SpotID, day.AvailableDate)
 			}
-			return fmt.Errorf("failed to insert available day %s: %w", day, err)
+			return fmt.Errorf("failed to insert available date %s: %w", day.AvailableDate, err)
 		}
 	}
 
-	// Commit the transaction
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
@@ -121,14 +98,13 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []string) error {
 }
 
 // GetAvailableParkingSpots 查詢可用停車位
-func GetAvailableParkingSpots() ([]models.ParkingSpot, [][]string, error) {
+func GetAvailableParkingSpots() ([]models.ParkingSpot, [][]models.ParkingSpotAvailableDay, error) {
 	var spots []models.ParkingSpot
-	currentDay := time.Now().Weekday().String()
+	currentDate := time.Now().Format("2006-01-02")
 
-	// 查詢 status 為 idle 且當前星期在 parking_spot_available_days 中的車位
 	err := database.DB.
-		Joins("INNER JOIN parking_spot_available_days pad ON parking_spots.spot_id = pad.spot_id").
-		Where("parking_spots.status = ? AND pad.day = ?", "idle", currentDay).
+		Joins("INNER JOIN parking_spot_available_days pad ON parking_spots.spot_id = pad.parking_spot_id").
+		Where("parking_spots.status = ? AND pad.available_date = ? AND pad.is_available = ?", "idle", currentDate, true).
 		Where("NOT EXISTS (SELECT 1 FROM rents WHERE rents.spot_id = parking_spots.spot_id AND rents.actual_end_time IS NULL)").
 		Find(&spots).Error
 
@@ -137,31 +113,27 @@ func GetAvailableParkingSpots() ([]models.ParkingSpot, [][]string, error) {
 		return nil, nil, fmt.Errorf("failed to query available parking spots: %w", err)
 	}
 
-	// Fetch all available days for all spots in a single query
 	spotIDs := make([]int, len(spots))
 	for i, spot := range spots {
 		spotIDs[i] = spot.SpotID
 	}
 
 	var availableDaysRecords []models.ParkingSpotAvailableDay
-	if err := database.DB.Where("spot_id IN ?", spotIDs).Find(&availableDaysRecords).Error; err != nil {
+	if err := database.DB.Where("parking_spot_id IN ?", spotIDs).Find(&availableDaysRecords).Error; err != nil {
 		log.Printf("Failed to fetch available days for spots: %v", err)
-		// Continue with empty days to avoid failing the entire request
 		availableDaysRecords = []models.ParkingSpotAvailableDay{}
 	}
 
-	// Group available days by spot_id
-	availableDaysMap := make(map[int][]string)
+	availableDaysMap := make(map[int][]models.ParkingSpotAvailableDay)
 	for _, record := range availableDaysRecords {
-		availableDaysMap[record.SpotID] = append(availableDaysMap[record.SpotID], record.Day)
+		availableDaysMap[record.SpotID] = append(availableDaysMap[record.SpotID], record)
 	}
 
-	// Populate availableDaysList
-	availableDaysList := make([][]string, len(spots))
+	availableDaysList := make([][]models.ParkingSpotAvailableDay, len(spots))
 	for i, spot := range spots {
 		availableDaysList[i] = availableDaysMap[spot.SpotID]
 		if availableDaysList[i] == nil {
-			availableDaysList[i] = []string{} // Ensure empty slice if no days found
+			availableDaysList[i] = []models.ParkingSpotAvailableDay{}
 		}
 	}
 
@@ -170,7 +142,7 @@ func GetAvailableParkingSpots() ([]models.ParkingSpot, [][]string, error) {
 }
 
 // GetParkingSpotByID 查詢特定車位
-func GetParkingSpotByID(id int) (*models.ParkingSpot, []string, error) {
+func GetParkingSpotByID(id int) (*models.ParkingSpot, []models.ParkingSpotAvailableDay, error) {
 	var spot models.ParkingSpot
 	if err := database.DB.
 		Preload("Member").
@@ -184,12 +156,10 @@ func GetParkingSpotByID(id int) (*models.ParkingSpot, []string, error) {
 		return nil, nil, fmt.Errorf("failed to get parking spot by ID %d: %w", id, err)
 	}
 
-	// Fetch available days
 	days, err := FetchAvailableDays(spot.SpotID)
 	if err != nil {
 		log.Printf("Error fetching available days for spot %d: %v", spot.SpotID, err)
-		// Continue with empty days to avoid failing the entire request
-		days = []string{}
+		days = []models.ParkingSpotAvailableDay{}
 	}
 
 	log.Printf("Successfully retrieved parking spot with ID %d", id)
@@ -208,7 +178,6 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 		return fmt.Errorf("failed to find parking spot with ID %d: %w", id, err)
 	}
 
-	// 驗證更新權限（僅限 shared_owner）
 	var member models.Member
 	if err := database.DB.Where("member_id = ?", spot.MemberID).First(&member).Error; err != nil {
 		log.Printf("Failed to verify member: %v", err)
@@ -218,7 +187,6 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 		return fmt.Errorf("only shared_owner can update parking spot")
 	}
 
-	// 映射並驗證字段
 	mappedFields := make(map[string]interface{})
 	for key, value := range updatedFields {
 		switch key {
@@ -286,57 +254,48 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 			}
 			mappedFields["latitude"] = lat
 		case "available_days":
-			// Handle available_days separately by updating the parking_spot_available_days table
 			days, ok := value.([]interface{})
 			if !ok {
 				return fmt.Errorf("invalid available_days type: must be an array")
 			}
-			var dayStrings []string
-			seenDays := make(map[string]bool)
+			var dayInputs []AvailableDayInput
 			for _, day := range days {
-				dayStr, ok := day.(string)
+				dayMap, ok := day.(map[string]interface{})
 				if !ok {
-					return fmt.Errorf("invalid day in available_days: must be a string")
+					return fmt.Errorf("invalid day in available_days: must be an object")
 				}
-				validDays := map[string]bool{
-					"Monday":    true,
-					"Tuesday":   true,
-					"Wednesday": true,
-					"Thursday":  true,
-					"Friday":    true,
-					"Saturday":  true,
-					"Sunday":    true,
+				date, ok := dayMap["date"].(string)
+				if !ok {
+					return fmt.Errorf("invalid date in available_days: must be a string")
 				}
-				if !validDays[dayStr] {
-					return fmt.Errorf("invalid day in available_days: %s", dayStr)
+				isAvailable, ok := dayMap["is_available"].(bool)
+				if !ok {
+					return fmt.Errorf("invalid is_available in available_days: must be a boolean")
 				}
-				// Check for duplicates in the input
-				if seenDays[dayStr] {
-					return fmt.Errorf("duplicate day in available_days: %s", dayStr)
+				if _, err := time.Parse("2006-01-02", date); err != nil {
+					return fmt.Errorf("invalid date format in available_days: %s", date)
 				}
-				seenDays[dayStr] = true
-				dayStrings = append(dayStrings, dayStr)
+				dayInputs = append(dayInputs, AvailableDayInput{Date: date, IsAvailable: isAvailable})
 			}
 
-			// Start a transaction to update available days
 			tx := database.DB.Begin()
-			// Delete existing available days
-			if err := tx.Exec("DELETE FROM parking_spot_available_days WHERE spot_id = ?", id).Error; err != nil {
+			if err := tx.Exec("DELETE FROM parking_spot_available_days WHERE parking_spot_id = ?", id).Error; err != nil {
 				tx.Rollback()
 				return fmt.Errorf("failed to delete existing available days: %w", err)
 			}
-			// Insert new available days
-			for _, day := range dayStrings {
-				if err := tx.Create(&models.ParkingSpotAvailableDay{SpotID: id, Day: day}).Error; err != nil {
+			for _, day := range dayInputs {
+				if err := tx.Create(&models.ParkingSpotAvailableDay{
+					SpotID:        id,
+					AvailableDate: day.Date,
+					IsAvailable:   day.IsAvailable,
+				}).Error; err != nil {
 					tx.Rollback()
-					// Check if the error is due to a duplicate key (unique constraint violation)
 					if gormErr, ok := err.(*mysql.MySQLError); ok && gormErr.Number == 1062 {
-						return fmt.Errorf("duplicate entry for spot_id %d and day %s", id, day)
+						return fmt.Errorf("duplicate entry for spot_id %d and date %s", id, day.Date)
 					}
-					return fmt.Errorf("failed to insert available day %s: %w", day, err)
+					return fmt.Errorf("failed to insert available date %s: %w", day.Date, err)
 				}
 			}
-			// Commit the transaction
 			if err := tx.Commit().Error; err != nil {
 				return fmt.Errorf("failed to commit transaction for available days: %w", err)
 			}
@@ -356,4 +315,9 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 
 	log.Printf("Successfully updated parking spot with ID %d", id)
 	return nil
+}
+
+type AvailableDayInput struct {
+	Date        string `json:"date"`
+	IsAvailable bool   `json:"is_available"`
 }

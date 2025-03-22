@@ -10,18 +10,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// 中間結構用於綁定客戶端輸入
+type AvailableDayInput struct {
+	Date        string `json:"date" binding:"required,datetime=2006-01-02"`
+	IsAvailable bool   `json:"is_available"`
+}
+
 type ParkingSpotInput struct {
-	MemberID         int      `json:"member_id" binding:"required,gt=0"`
-	ParkingType      string   `json:"parking_type" binding:"required,oneof=mechanical flat"`
-	FloorLevel       string   `json:"floor_level" binding:"omitempty,max=20"`
-	Location         string   `json:"location" binding:"required,max=50"`
-	PricingType      string   `json:"pricing_type" binding:"required,oneof=monthly hourly"`
-	PricePerHalfHour float64  `json:"price_per_half_hour" binding:"gte=0"`
-	DailyMaxPrice    float64  `json:"daily_max_price" binding:"gte=0"`
-	Longitude        float64  `json:"longitude" binding:"gte=-180,lte=180"`
-	Latitude         float64  `json:"latitude" binding:"gte=-90,lte=90"`
-	AvailableDays    []string `json:"available_days" binding:"required,dive,oneof=Monday Tuesday Wednesday Thursday Friday Saturday Sunday"`
+	MemberID         int                 `json:"member_id" binding:"required,gt=0"`
+	ParkingType      string              `json:"parking_type" binding:"required,oneof=mechanical flat"`
+	FloorLevel       string              `json:"floor_level" binding:"omitempty,max=20"`
+	Location         string              `json:"location" binding:"required,max=50"`
+	PricingType      string              `json:"pricing_type" binding:"required,oneof=monthly hourly"`
+	PricePerHalfHour float64             `json:"price_per_half_hour" binding:"gte=0"`
+	DailyMaxPrice    float64             `json:"daily_max_price" binding:"gte=0"`
+	Longitude        float64             `json:"longitude" binding:"gte=-180,lte=180"`
+	Latitude         float64             `json:"latitude" binding:"gte=-90,lte=90"`
+	AvailableDays    []AvailableDayInput `json:"available_days" binding:"required,dive"`
 }
 
 func ShareParkingSpot(c *gin.Context) {
@@ -32,7 +36,6 @@ func ShareParkingSpot(c *gin.Context) {
 		return
 	}
 
-	// 將輸入數據轉換為 ParkingSpot
 	spot := &models.ParkingSpot{
 		MemberID:         input.MemberID,
 		ParkingType:      input.ParkingType,
@@ -45,23 +48,21 @@ func ShareParkingSpot(c *gin.Context) {
 		Latitude:         input.Latitude,
 	}
 
-	// Call the updated ShareParkingSpot service function
-	if err := services.ShareParkingSpot(spot, input.AvailableDays); err != nil {
+	availableDays := make([]models.ParkingSpotAvailableDay, len(input.AvailableDays))
+	for i, day := range input.AvailableDays {
+		availableDays[i] = models.ParkingSpotAvailableDay{
+			AvailableDate: day.Date,
+			IsAvailable:   day.IsAvailable,
+		}
+	}
+
+	if err := services.ShareParkingSpot(spot, availableDays); err != nil {
 		log.Printf("Failed to share parking spot for member %d: %v", input.MemberID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "儲存車位失敗"})
 		return
 	}
 
-	// Fetch available days for the response
-	availableDays, err := services.FetchAvailableDays(spot.SpotID)
-	if err != nil {
-		log.Printf("Failed to fetch available days for spot %d: %v", spot.SpotID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "獲取可用日期失敗"})
-		return
-	}
-
-	// 重新查詢以加載關聯數據
-	refreshedSpot, availableDays, err := services.GetParkingSpotByID(spot.SpotID)
+	refreshedSpot, availableDaysFetched, err := services.GetParkingSpotByID(spot.SpotID)
 	if err != nil {
 		log.Printf("Failed to refresh parking spot with ID %d: %v", spot.SpotID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "刷新車位資料失敗"})
@@ -70,11 +71,10 @@ func ShareParkingSpot(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "車位共享成功",
-		"data":    refreshedSpot.ToResponse(availableDays),
+		"data":    refreshedSpot.ToResponse(availableDaysFetched),
 	})
 }
 
-// 查詢可用停車位資料檢查
 func GetAvailableParkingSpots(c *gin.Context) {
 	spots, availableDaysList, err := services.GetAvailableParkingSpots()
 	if err != nil {
@@ -94,7 +94,6 @@ func GetAvailableParkingSpots(c *gin.Context) {
 	})
 }
 
-// 查詢特定車位資料檢查
 func GetParkingSpot(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -104,7 +103,6 @@ func GetParkingSpot(c *gin.Context) {
 		return
 	}
 
-	// 使用 services 層的 GetParkingSpotByID 來加載數據
 	spot, availableDays, err := services.GetParkingSpotByID(id)
 	if err != nil {
 		log.Printf("Failed to get parking spot: %v", err)
@@ -122,7 +120,6 @@ func GetParkingSpot(c *gin.Context) {
 	})
 }
 
-// UpdateParkingSpot 更新車位信息
 func UpdateParkingSpot(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)

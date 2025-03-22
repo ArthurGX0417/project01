@@ -36,8 +36,8 @@ func RentParkingSpot(rent *models.Rent) error {
 	}
 
 	// 使用 ParkingSpotAvailableDay 模型查詢可用日期
-	var availableDays []models.ParkingSpotAvailableDay
-	if err := database.DB.Where("spot_id = ?", spot.SpotID).Find(&availableDays).Error; err != nil {
+	availableDays, err := FetchAvailableDays(spot.SpotID)
+	if err != nil {
 		log.Printf("Failed to query available days for spot %d: %v", spot.SpotID, err)
 		return fmt.Errorf("failed to query available days: %w", err)
 	}
@@ -47,33 +47,26 @@ func RentParkingSpot(rent *models.Rent) error {
 		return fmt.Errorf("parking spot %d has no available days", spot.SpotID)
 	}
 
-	// 提取可用日期
-	days := make([]string, len(availableDays))
-	for i, day := range availableDays {
-		days[i] = day.AvailableDate
-	}
-
-	// 檢查租用時間段內的每一天是否都在 available_days 中
+	// 檢查租用時間段是否在可用日期內
 	start := rent.StartTime
 	end := rent.EndTime
 	if start.After(end) {
 		return fmt.Errorf("start_time cannot be later than end_time")
 	}
 
-	current := start
-	for !current.After(end) {
-		day := current.Weekday().String()
-		isAvailable := false
-		for _, availableDay := range days {
-			if day == availableDay {
+	isAvailable := false
+	for current := start; !current.After(end); current = current.Add(24 * time.Hour) {
+		currentDate := current.Format("2006-01-02")
+		for _, day := range availableDays {
+			if day.AvailableDate == currentDate && day.IsAvailable {
 				isAvailable = true
 				break
 			}
 		}
 		if !isAvailable {
-			return fmt.Errorf("parking spot %d is not available on %s", spot.SpotID, day)
+			return fmt.Errorf("parking spot %d is not available on %s", spot.SpotID, currentDate)
 		}
-		current = current.Add(24 * time.Hour)
+		isAvailable = false // Reset for the next day
 	}
 
 	// 設置 actual_end_time 為 NULL
@@ -95,7 +88,7 @@ func RentParkingSpot(rent *models.Rent) error {
 	return nil
 }
 
-// 查詢租用紀錄
+// GetRentRecords 查詢租用紀錄
 func GetRentRecords() ([]models.Rent, error) {
 	var rents []models.Rent
 	// 查詢所有租用記錄
@@ -106,7 +99,7 @@ func GetRentRecords() ([]models.Rent, error) {
 	return rents, nil
 }
 
-// 取消租用
+// CancelRent 取消租用
 func CancelRent(id int) error {
 	var rent models.Rent
 	// 檢查租用是否存在
@@ -150,7 +143,7 @@ func CancelRent(id int) error {
 	return nil
 }
 
-// 離開付款
+// LeaveAndPay 離開付款
 func LeaveAndPay(rentID int, actualEndTime time.Time) (float64, error) {
 	var rent models.Rent
 	var spot models.ParkingSpot
@@ -242,7 +235,7 @@ func LeaveAndPay(rentID int, actualEndTime time.Time) (float64, error) {
 	return totalCost, nil
 }
 
-// 每月收費
+// MonthlySettlement 每月收費
 func MonthlySettlement() error {
 	var rents []models.Rent
 	currentTime := time.Now()

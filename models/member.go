@@ -1,5 +1,9 @@
 package models
 
+func (Member) TableName() string {
+	return "member"
+}
+
 type Member struct {
 	MemberID           int           `json:"member_id" gorm:"primaryKey;autoIncrement;type:INT"`
 	Name               string        `json:"name" gorm:"type:varchar(50);not null" binding:"required,max=50"`

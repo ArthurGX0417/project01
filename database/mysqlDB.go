@@ -9,6 +9,7 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"gorm.io/gorm/schema"
 )
 
 var DB *gorm.DB
@@ -42,6 +43,9 @@ func InitDB() {
 	for i := 0; i < maxRetries; i++ {
 		DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
 			Logger: logger.Default.LogMode(logLevel),
+			NamingStrategy: schema.NamingStrategy{
+				SingularTable: true, // 設置為 true，確保使用單數表名
+			},
 		})
 		if err == nil {
 			break

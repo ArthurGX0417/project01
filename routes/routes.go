@@ -1,16 +1,72 @@
 package routes
 
 import (
+	"net/http"
+	"os"
 	"project01/handlers"
+	"strings"
 
+	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
 )
 
-// AuthMiddleware 是驗證中間件的佔位符
+// 定義一個密鑰，用於簽署和驗證 JWT（應該存放在環境變數中）
+var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+
+// AuthMiddleware 驗證 JWT token
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// TODO: Implement authentication logic (e.g., check JWT token)
-		// For now, just proceed to the next handler
+		// 從 Authorization 標頭中獲取 token
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "缺少 Authorization 標頭"})
+			c.Abort()
+			return
+		}
+
+		// Authorization 標頭格式應為 "Bearer <token>"
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "無效的 Authorization 格式"})
+			c.Abort()
+			return
+		}
+
+		tokenString := parts[1]
+
+		// 解析並驗證 JWT
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			// 確保簽署方法是 HMAC
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, jwt.ErrSignatureInvalid
+			}
+			return jwtSecret, nil
+		})
+
+		if err != nil || !token.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "無效的 token"})
+			c.Abort()
+			return
+		}
+
+		// 從 token 中提取會員 ID（假設 token 中包含 member_id）
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok || !token.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "無效的 token 內容"})
+			c.Abort()
+			return
+		}
+
+		// 將 member_id 存入上下文，供後續處理函數使用
+		memberID, ok := claims["member_id"].(float64) // JWT 中數字以 float64 儲存
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "無效的會員 ID"})
+			c.Abort()
+			return
+		}
+		c.Set("member_id", int(memberID))
+
+		// 繼續處理下一個處理函數
 		c.Next()
 	}
 }
@@ -34,7 +90,7 @@ func Path(router *gin.RouterGroup) {
 			membersWithAuth := members.Group("")
 			membersWithAuth.Use(AuthMiddleware())
 			{
-				membersWithAuth.GET("", handlers.GetAllMembers)                // 查詢所有會員
+				membersWithAuth.GET("all", handlers.GetAllMembers)             // 查詢所有會員
 				membersWithAuth.GET("/:id", handlers.GetMember)                // 查詢會員
 				membersWithAuth.PUT("/:id", handlers.UpdateMember)             // 更新會員資料
 				membersWithAuth.DELETE("/:id", handlers.DeleteMember)          // 刪除會員
@@ -45,7 +101,7 @@ func Path(router *gin.RouterGroup) {
 		// 車位路由
 		parking := v1.Group("/parking")
 		{
-			parking.POST("", handlers.ShareParkingSpot)                  // 共享車位
+			parking.POST("share", handlers.ShareParkingSpot)             // 共享車位
 			parking.GET("/available", handlers.GetAvailableParkingSpots) // 查詢可用車位
 			// Protected routes with AuthMiddleware
 			parkingWithAuth := parking.Group("")

@@ -3,13 +3,16 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"os"
 	"project01/database"
 	"project01/models"
 	"project01/services"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // 電子郵件驗證 regex
@@ -17,6 +20,9 @@ var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]
 
 // 電話驗證字串 (例如：10 位數)
 var phoneRegex = regexp.MustCompile(`^[0-9]{10}$`)
+
+// 定義一個密鑰，用於簽名 JWT（在實際應用中應該從環境變數中讀取）
+var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
 
 // 註冊會員資料檢查
 func RegisterMember(c *gin.Context) {
@@ -124,9 +130,24 @@ func LoginMember(c *gin.Context) {
 		return
 	}
 
+	// 生成 JWT
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"member_id": member.MemberID,
+		"exp":       time.Now().Add(time.Hour * 24).Unix(), // token 有效期 24 小時
+	})
+
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		log.Printf("Failed to generate token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "無法生成 token"})
+		return
+	}
+
+	log.Printf("Member logged in successfully: email=%s", member.Email)
 	c.JSON(http.StatusOK, gin.H{
 		"message": "登入成功",
 		"data":    member.ToResponse(),
+		"token":   tokenString, // 返回 token 給前端
 	})
 }
 

@@ -14,11 +14,10 @@ import (
 )
 
 func main() {
-	// 加載環境變量
+	// 載入 .env 檔案
 	if err := godotenv.Load(); err != nil {
-		log.Fatalf("Failed to load .env file: %v. Please ensure the .env file exists in the project root directory.", err)
+		log.Printf("No .env file found, using default environment variables: %v", err)
 	}
-	log.Println(".env file loaded successfully")
 
 	// 調用 AES_KEY 是否加載成功
 	if err := utils.InitCrypto(); err != nil {

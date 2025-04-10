@@ -21,8 +21,17 @@ var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]
 // 電話驗證字串 (例如：10 位數)
 var phoneRegex = regexp.MustCompile(`^[0-9]{10}$`)
 
-// 定義一個密鑰，用於簽名 JWT（在實際應用中應該從環境變數中讀取）
-var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+// 定義並初始化 jwtSecret
+var jwtSecret []byte
+
+func init() {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		log.Fatal("JWT_SECRET environment variable is not set")
+	}
+	jwtSecret = []byte(secret)
+	log.Printf("Loaded JWT_SECRET in handlers: %s...", secret[:4])
+}
 
 // 註冊會員資料檢查
 func RegisterMember(c *gin.Context) {
@@ -142,6 +151,9 @@ func LoginMember(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "無法生成 token"})
 		return
 	}
+
+	// 記錄生成的 token（僅記錄前 10 個字符，避免安全風險）
+	log.Printf("Generated JWT token: %s...", tokenString[:10])
 
 	log.Printf("Member logged in successfully: email=%s", member.Email)
 	c.JSON(http.StatusOK, gin.H{

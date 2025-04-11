@@ -13,49 +13,121 @@ import (
 	"gorm.io/gorm"
 )
 
+// RentInput 定義用於綁定請求的輸入結構體
+type RentInput struct {
+	MemberID  int       `json:"member_id" binding:"required"`
+	SpotID    int       `json:"spot_id" binding:"required"`
+	StartTime time.Time `json:"start_time" binding:"required"`
+	EndTime   time.Time `json:"end_time" binding:"required"`
+}
+
 // RentParkingSpot 租車位資料檢查
 func RentParkingSpot(c *gin.Context) {
-	var rent models.Rent
-	if err := c.ShouldBindJSON(&rent); err != nil {
+	// 綁定請求到 RentInput 結構體
+	var input RentInput
+	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Printf("Invalid input data: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "無效的輸入資料"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的輸入資料",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// 從 token 中提取當前用戶的 member_id
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		log.Printf("Failed to get member_id from context")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "member_id not found in token",
+		})
+		return
+	}
+
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		log.Printf("Invalid member_id type in context")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "invalid member_id type",
+		})
+		return
+	}
+
+	// 檢查請求中的 member_id 是否與當前用戶一致
+	if currentMemberIDInt != input.MemberID {
+		log.Printf("Member %d attempted to rent parking spot for member %d", currentMemberIDInt, input.MemberID)
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  false,
+			"message": "無權限",
+			"error":   "you can only rent parking spots for yourself",
+		})
 		return
 	}
 
 	// 驗證 StartTime 是否在未來
-	if rent.StartTime.Before(time.Now()) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "開始時間必須在未來"})
+	if input.StartTime.Before(time.Now()) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "開始時間必須在未來",
+		})
 		return
 	}
 
-	wifiVerified, err := services.VerifyWifi(rent.MemberID)
+	// 檢查 WiFi 驗證
+	wifiVerified, err := services.VerifyWifi(input.MemberID)
 	if err != nil {
-		log.Printf("Failed to verify WiFi for member %d: %v", rent.MemberID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "WiFi 驗證失敗"})
+		log.Printf("Failed to verify WiFi for member %d: %v", input.MemberID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "WiFi 驗證失敗",
+			"error":   err.Error(),
+		})
 		return
 	}
 	if !wifiVerified {
-		c.JSON(http.StatusForbidden, gin.H{"error": "請通過 WiFi 驗證以使用服務"})
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  false,
+			"message": "請通過 WiFi 驗證以使用服務",
+		})
 		return
 	}
 
-	if err := services.RentParkingSpot(&rent); err != nil {
+	// 將 RentInput 轉換為 models.Rent
+	rent := &models.Rent{
+		MemberID:  input.MemberID,
+		SpotID:    input.SpotID,
+		StartTime: input.StartTime,
+		EndTime:   input.EndTime,
+	}
+
+	// 調用服務層方法
+	if err := services.RentParkingSpot(rent); err != nil {
 		log.Printf("Failed to rent parking spot %d for member %d: %v", rent.SpotID, rent.MemberID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "租用車位失敗",
-			"details": err.Error(),
+			"status":  false,
+			"message": "租用車位失敗",
+			"error":   err.Error(),
 		})
 		return
 	}
 
 	// 預加載關聯數據，包括嵌套的 ParkingSpot.Member
-	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").First(&rent, rent.RentID).Error; err != nil {
+	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").First(rent, rent.RentID).Error; err != nil {
 		log.Printf("Failed to preload rent data for rent ID %d: %v", rent.RentID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "載入租用資料失敗"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "載入租用資料失敗",
+			"error":   err.Error(),
+		})
 		return
 	}
 
-	// Fetch available days for the parking spot
+	// 獲取車位的可用日期
 	availableDays, err := services.FetchAvailableDays(rent.SpotID)
 	if err != nil {
 		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
@@ -63,6 +135,7 @@ func RentParkingSpot(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
 		"message": "車位租用成功",
 		"data":    rent.ToResponse(availableDays),
 	})
@@ -73,17 +146,22 @@ func GetRentRecords(c *gin.Context) {
 	rents, err := services.GetRentRecords()
 	if err != nil {
 		log.Printf("Failed to get rent records: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查詢租用紀錄失敗"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "查詢租用紀錄失敗",
+			"error":   err.Error(),
+		})
 		return
 	}
 
-	// Use SimpleRentResponse to reduce response size
+	// 使用 SimpleRentResponse 減少回應大小
 	rentResponses := make([]models.SimpleRentResponse, len(rents))
 	for i, rent := range rents {
 		rentResponses[i] = rent.ToSimpleResponse()
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
 		"message": "查詢成功",
 		"data":    rentResponses,
 	})
@@ -95,17 +173,26 @@ func CancelRent(c *gin.Context) {
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		log.Printf("Invalid rent ID: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "無效的租用ID"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的租用ID",
+			"error":   err.Error(),
+		})
 		return
 	}
 
 	if err := services.CancelRent(id); err != nil {
 		log.Printf("Failed to cancel rent: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "取消租用失敗"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "取消租用失敗",
+			"error":   err.Error(),
+		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
 		"message": "取消租用成功",
 	})
 }
@@ -116,25 +203,39 @@ func LeaveAndPay(c *gin.Context) {
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		log.Printf("Invalid rent ID: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "無效的租用ID"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的租用ID",
+			"error":   err.Error(),
+		})
 		return
 	}
 
 	var rent models.Rent
 	if err := database.DB.Preload("Member").Preload("ParkingSpot").First(&rent, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "租用記錄不存在"})
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  false,
+				"message": "租用記錄不存在",
+			})
 			return
 		}
 		log.Printf("Failed to get rent: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "結算失敗"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "結算失敗",
+			"error":   err.Error(),
+		})
 		return
 	}
 
 	// 檢查是否已結算
 	if rent.ActualEndTime != nil {
 		log.Printf("Attempted to settle already settled rent ID %d", id)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "租用已結算，無法再次結算"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "租用已結算，無法再次結算",
+		})
 		return
 	}
 
@@ -144,14 +245,22 @@ func LeaveAndPay(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Printf("Invalid input: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "無效的輸入數據"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的輸入數據",
+			"error":   err.Error(),
+		})
 		return
 	}
 
 	actualEndTime, err := time.Parse(time.RFC3339, input.ActualEndTime)
 	if err != nil {
 		log.Printf("Invalid actual_end_time format: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "實際離開時間格式錯誤"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "實際離開時間格式錯誤",
+			"error":   err.Error(),
+		})
 		return
 	}
 
@@ -160,8 +269,9 @@ func LeaveAndPay(c *gin.Context) {
 	if err != nil {
 		log.Printf("Failed to process leave and pay: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "結算失敗",
-			"details": err.Error(),
+			"status":  false,
+			"message": "結算失敗",
+			"error":   err.Error(),
 		})
 		return
 	}
@@ -169,11 +279,15 @@ func LeaveAndPay(c *gin.Context) {
 	// 重新加載更新後的租用記錄
 	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").First(&rent, id).Error; err != nil {
 		log.Printf("Failed to reload rent data: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "載入租用資料失敗"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "載入租用資料失敗",
+			"error":   err.Error(),
+		})
 		return
 	}
 
-	// Fetch available days for the parking spot
+	// 獲取車位的可用日期
 	availableDays, err := services.FetchAvailableDays(rent.SpotID)
 	if err != nil {
 		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
@@ -181,6 +295,7 @@ func LeaveAndPay(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"status":          true,
 		"message":         "結算成功",
 		"actual_end_time": rent.ActualEndTime,
 		"total_cost":      totalCost,
@@ -194,22 +309,34 @@ func GetRentByID(c *gin.Context) {
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		log.Printf("Invalid rent ID: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "無效的租用ID"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的租用ID",
+			"error":   err.Error(),
+		})
 		return
 	}
 
 	rent, availableDays, err := services.GetRentByID(id)
 	if err != nil {
 		log.Printf("Failed to get rent: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查詢租賃記錄失敗"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "查詢租賃記錄失敗",
+			"error":   err.Error(),
+		})
 		return
 	}
 	if rent == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "租賃記錄不存在"})
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  false,
+			"message": "租賃記錄不存在",
+		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
 		"message": "查詢成功",
 		"data":    rent.ToResponse(availableDays),
 	})

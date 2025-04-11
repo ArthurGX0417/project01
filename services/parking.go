@@ -292,7 +292,7 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 			}
 
 			tx := database.DB.Begin()
-			if err := tx.Exec("DELETE FROM parking_spot_available_days WHERE parking_spot_id = ?", id).Error; err != nil {
+			if err := tx.Where("parking_spot_id = ?", id).Delete(&models.ParkingSpotAvailableDay{}).Error; err != nil {
 				tx.Rollback()
 				return fmt.Errorf("failed to delete existing available days: %w", err)
 			}

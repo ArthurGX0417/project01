@@ -14,6 +14,10 @@ type Rent struct {
 	ParkingSpot   ParkingSpot `json:"-" gorm:"foreignKey:spot_id;references:SpotID"`
 }
 
+func (Rent) TableName() string {
+	return "rent"
+}
+
 type RentResponse struct {
 	RentID        int                 `json:"rent_id"`
 	MemberID      int                 `json:"member_id"`

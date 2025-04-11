@@ -47,10 +47,7 @@ func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay) Parkin
 
 	days := make([]AvailableDayResponse, len(availableDays))
 	for i, day := range availableDays {
-		days[i] = AvailableDayResponse{
-			Date:        day.AvailableDate,
-			IsAvailable: day.IsAvailable,
-		}
+		days[i] = day.ToResponse() // 使用 ParkingSpotAvailableDay 的 ToResponse 方法
 	}
 
 	return ParkingSpotResponse{

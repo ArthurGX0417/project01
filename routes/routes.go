@@ -84,9 +84,11 @@ func Path(router *gin.RouterGroup) {
 		// 會員路由
 		members := v1.Group("/members")
 		{
+			// 公開路由：不需要 token 驗證
 			members.POST("/register", handlers.RegisterMember) // 註冊會員
-			members.POST("/login", handlers.LoginMember)       // 登入會員
-			// Protected routes with AuthMiddleware
+			members.POST("/login", handlers.LoginMember)       // 登入會員並獲取 token
+
+			// 受保護路由：需要 token 驗證
 			membersWithAuth := members.Group("")
 			membersWithAuth.Use(AuthMiddleware())
 			{
@@ -101,9 +103,11 @@ func Path(router *gin.RouterGroup) {
 		// 車位路由
 		parking := v1.Group("/parking")
 		{
+			// 公開路由：不需要 token 驗證
 			parking.POST("share", handlers.ShareParkingSpot)             // 共享車位
 			parking.GET("/available", handlers.GetAvailableParkingSpots) // 查詢可用車位
-			// Protected routes with AuthMiddleware
+
+			// 受保護路由：需要 token 驗證
 			parkingWithAuth := parking.Group("")
 			parkingWithAuth.Use(AuthMiddleware())
 			{
@@ -115,7 +119,7 @@ func Path(router *gin.RouterGroup) {
 		// 租用路由
 		rent := v1.Group("/rent")
 		{
-			// Protected routes with AuthMiddleware
+			// 受保護路由：需要 token 驗證
 			rentWithAuth := rent.Group("")
 			rentWithAuth.Use(AuthMiddleware())
 			{

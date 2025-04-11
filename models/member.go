@@ -21,19 +21,6 @@ type Member struct {
 	Rents              []Rent        `json:"-" gorm:"foreignKey:member_id;references:MemberID"`
 }
 
-type SimpleMemberResponse struct {
-	MemberID           int    `json:"member_id"`
-	Name               string `json:"name"`
-	Phone              string `json:"phone"`
-	Role               string `json:"role"`
-	PaymentMethod      string `json:"payment_method"`
-	AutoMonthlyPayment bool   `json:"auto_monthly_payment"`
-	LicensePlate       string `json:"license_plate"`
-	CarModel           string `json:"car_model"`
-	Email              string `json:"email"`
-	WifiVerified       bool   `json:"wifi_verified"`
-}
-
 type MemberResponse struct {
 	MemberID           int                   `json:"member_id"`
 	Name               string                `json:"name"`
@@ -68,11 +55,8 @@ func (m *Member) ToResponse() MemberResponse {
 func (m *Member) ToResponseWithSpots(spots []ParkingSpot) MemberResponse {
 	spotsResponse := make([]ParkingSpotResponse, len(spots))
 	for i, spot := range spots {
-		var availableDays []ParkingSpotAvailableDay
-		for _, record := range spot.AvailableDays {
-			availableDays = append(availableDays, record)
-		}
-		spotsResponse[i] = spot.ToResponse(availableDays)
+		// 直接傳遞 spot.AvailableDays，無需創建新的切片
+		spotsResponse[i] = spot.ToResponse(spot.AvailableDays)
 	}
 
 	return MemberResponse{

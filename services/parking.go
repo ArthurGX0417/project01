@@ -98,37 +98,62 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 }
 
 // GetAvailableParkingSpots 查詢可用停車位
-func GetAvailableParkingSpots() ([]models.ParkingSpot, [][]models.ParkingSpotAvailableDay, error) {
+func GetAvailableParkingSpots(location, date string) ([]models.ParkingSpot, [][]models.ParkingSpotAvailableDay, error) {
 	var spots []models.ParkingSpot
-	currentDate := time.Now().Format("2006-01-02")
 
-	err := database.DB.
-		Joins("INNER JOIN parking_spot_available_days pad ON parking_spots.spot_id = pad.parking_spot_id").
-		Where("parking_spots.status = ? AND pad.available_date = ? AND pad.is_available = ?", "idle", currentDate, true).
-		Where("NOT EXISTS (SELECT 1 FROM rents WHERE rents.spot_id = parking_spots.spot_id AND rents.actual_end_time IS NULL)").
-		Find(&spots).Error
+	// 構建查詢
+	query := database.DB.
+		Joins("INNER JOIN parking_spot_available_day pad ON parking_spot.spot_id = pad.parking_spot_id").
+		Where("pad.is_available = ?", true).
+		Where("NOT EXISTS (SELECT 1 FROM rents WHERE rents.spot_id = parking_spot.spot_id AND rents.actual_end_time IS NULL)")
 
+	// 如果提供了 location，添加過濾條件
+	if location != "" {
+		query = query.Where("parking_spot.location LIKE ?", "%"+location+"%")
+	}
+
+	// 如果提供了 date，添加過濾條件；否則使用當前日期
+	if date != "" {
+		query = query.Where("pad.available_date = ?", date)
+	} else {
+		query = query.Where("pad.available_date = ?", time.Now().Format("2006-01-02"))
+	}
+
+	// 確保停車位狀態為 idle
+	query = query.Where("parking_spot.status = ?", "idle")
+
+	// 執行查詢
+	err := query.Find(&spots).Error
 	if err != nil {
 		log.Printf("Failed to query available parking spots: %v", err)
 		return nil, nil, fmt.Errorf("failed to query available parking spots: %w", err)
 	}
 
+	// 如果沒有找到任何停車位，返回空陣列
+	if len(spots) == 0 {
+		return spots, nil, nil
+	}
+
+	// 提取 spotIDs
 	spotIDs := make([]int, len(spots))
 	for i, spot := range spots {
 		spotIDs[i] = spot.SpotID
 	}
 
+	// 查詢可用日期
 	var availableDaysRecords []models.ParkingSpotAvailableDay
 	if err := database.DB.Where("parking_spot_id IN ?", spotIDs).Find(&availableDaysRecords).Error; err != nil {
 		log.Printf("Failed to fetch available days for spots: %v", err)
 		availableDaysRecords = []models.ParkingSpotAvailableDay{}
 	}
 
+	// 將可用日期按 spotID 分組
 	availableDaysMap := make(map[int][]models.ParkingSpotAvailableDay)
 	for _, record := range availableDaysRecords {
 		availableDaysMap[record.SpotID] = append(availableDaysMap[record.SpotID], record)
 	}
 
+	// 為每個停車位分配可用日期
 	availableDaysList := make([][]models.ParkingSpotAvailableDay, len(spots))
 	for i, spot := range spots {
 		availableDaysList[i] = availableDaysMap[spot.SpotID]

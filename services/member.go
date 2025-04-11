@@ -102,7 +102,8 @@ func LoginMember(email, phone, password string) (*models.Member, error) {
 func GetMemberByID(id int) (*models.Member, error) {
 	var member models.Member
 	if err := database.DB.
-		Preload("ParkingSpots").
+		Preload("Spots").               // 修正為 Spots
+		Preload("Spots.AvailableDays"). // 預載停車位的可用日期
 		Preload("Rents").
 		First(&member, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -131,8 +132,11 @@ func GetMemberByID(id int) (*models.Member, error) {
 // GetAllMembers 查詢所有會員
 func GetAllMembers() ([]models.Member, error) {
 	var members []models.Member
-	// No preloading since SimpleMemberResponse doesn't need ParkingSpots or Rents
-	if err := database.DB.Find(&members).Error; err != nil {
+	if err := database.DB.
+		Preload("Spots").
+		Preload("Spots.AvailableDays").
+		Preload("Rents").
+		Find(&members).Error; err != nil {
 		log.Printf("Failed to query all members: %v", err)
 		return nil, fmt.Errorf("failed to query all members: %w", err)
 	}
@@ -305,6 +309,29 @@ func DeleteMember(id int) error {
 		tx.Rollback()
 		log.Printf("Failed to delete rents for member %d: %v", id, err)
 		return fmt.Errorf("failed to delete rents for member %d: %w", id, err)
+	}
+
+	// 查找所有相關的 parking_spots
+	var parkingSpots []models.ParkingSpot
+	if err := tx.Where("member_id = ?", id).Find(&parkingSpots).Error; err != nil {
+		tx.Rollback()
+		log.Printf("Failed to find parking spots for member %d: %v", id, err)
+		return fmt.Errorf("failed to find parking spots for member %d: %w", id, err)
+	}
+
+	// 收集所有 parking_spot 的 ID
+	spotIDs := make([]int, len(parkingSpots))
+	for i, spot := range parkingSpots {
+		spotIDs[i] = spot.SpotID
+	}
+
+	// 刪除相關的 parking_spot_available_days
+	if len(spotIDs) > 0 {
+		if err := tx.Where("parking_spot_id IN ?", spotIDs).Delete(&models.ParkingSpotAvailableDay{}).Error; err != nil {
+			tx.Rollback()
+			log.Printf("Failed to delete parking spot available days for member %d: %v", id, err)
+			return fmt.Errorf("failed to delete parking spot available days for member %d: %w", id, err)
+		}
 	}
 
 	// 刪除相關的 parking_spots

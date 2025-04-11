@@ -76,22 +76,25 @@ func ShareParkingSpot(c *gin.Context) {
 }
 
 func GetAvailableParkingSpots(c *gin.Context) {
-	spots, availableDaysList, err := services.GetAvailableParkingSpots()
+	location := c.Query("location")
+	date := c.Query("date")
+
+	// 接收所有三個返回值
+	spots, availableDaysList, err := services.GetAvailableParkingSpots(location, date)
 	if err != nil {
 		log.Printf("Failed to get available parking spots: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查詢可用車位失敗"})
+		ErrorResponse(c, http.StatusInternalServerError, "查詢可用停車位失敗", err.Error())
 		return
 	}
 
-	parkingSpotResponses := make([]models.ParkingSpotResponse, len(spots))
+	// 將 availableDaysList 與 spots 關聯起來
+	spotResponses := make([]models.ParkingSpotResponse, len(spots))
 	for i, spot := range spots {
-		parkingSpotResponses[i] = spot.ToResponse(availableDaysList[i])
+		// 為每個停車位設置可用日期
+		spotResponses[i] = spot.ToResponse(availableDaysList[i])
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "查詢成功",
-		"data":    parkingSpotResponses,
-	})
+	SuccessResponse(c, http.StatusOK, "查詢成功", spotResponses)
 }
 
 func GetParkingSpot(c *gin.Context) {

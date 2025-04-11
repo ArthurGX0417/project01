@@ -93,7 +93,7 @@ func GetAvailableParkingSpots(location, date string) ([]models.ParkingSpot, [][]
 	query := database.DB.
 		Joins("INNER JOIN parking_spot_available_day pad ON parking_spot.spot_id = pad.parking_spot_id").
 		Where("pad.is_available = ?", true).
-		Where("NOT EXISTS (SELECT 1 FROM rents WHERE rents.spot_id = parking_spot.spot_id AND rents.actual_end_time IS NULL)")
+		Where("NOT EXISTS (SELECT 1 FROM rent WHERE rent.spot_id = parking_spot.spot_id AND rent.actual_end_time IS NULL)")
 
 	// 如果提供了 location，添加過濾條件
 	if location != "" {
@@ -159,7 +159,7 @@ func GetParkingSpotByID(id int) (*models.ParkingSpot, []models.ParkingSpotAvaila
 	var spot models.ParkingSpot
 	if err := database.DB.
 		Preload("Member").
-		Preload("Rents").
+		Preload("Rent").
 		First(&spot, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("Parking spot with ID %d not found", id)

@@ -13,7 +13,6 @@ import (
 )
 
 // RentParkingSpot 租用車位
-// RentParkingSpot 租用車位
 func RentParkingSpot(rent *models.Rent) error {
 	var spot models.ParkingSpot
 	// 驗證 member_id
@@ -45,7 +44,7 @@ func RentParkingSpot(rent *models.Rent) error {
 
 	// 檢查是否有可用日期
 	if len(availableDays) == 0 {
-		return fmt.Errorf("parking spot %d has no available days", spot.SpotID)
+		return fmt.Errorf("parking spot %d has no available days; please add available dates in parking_spot_available_day", spot.SpotID)
 	}
 
 	// 檢查租用時間段是否在可用日期內
@@ -58,17 +57,21 @@ func RentParkingSpot(rent *models.Rent) error {
 	isAvailable := false
 	for current := start; !current.After(end); current = current.Add(24 * time.Hour) {
 		currentDate := current.Format("2006-01-02")
+		isAvailable = false // Reset for each day
 		for _, day := range availableDays {
 			// 將 AvailableDate 格式化為字符串進行比較
-			if day.AvailableDate.Format("2006-01-02") == currentDate && day.IsAvailable {
-				isAvailable = true
-				break
+			if day.AvailableDate.Format("2006-01-02") == currentDate {
+				if day.IsAvailable {
+					isAvailable = true
+					break
+				} else {
+					return fmt.Errorf("parking spot %d is marked as unavailable on %s", spot.SpotID, currentDate)
+				}
 			}
 		}
 		if !isAvailable {
-			return fmt.Errorf("parking spot %d is not available on %s", spot.SpotID, currentDate)
+			return fmt.Errorf("parking spot %d has no availability record for %s; please add this date to parking_spot_available_day", spot.SpotID, currentDate)
 		}
-		isAvailable = false // Reset for the next day
 	}
 
 	// 設置 actual_end_time 為 NULL

@@ -123,11 +123,11 @@ func Path(router *gin.RouterGroup) {
 			rentWithAuth := rent.Group("")
 			rentWithAuth.Use(AuthMiddleware())
 			{
-				rentWithAuth.POST("", handlers.RentParkingSpot)        // 租用車位
-				rentWithAuth.POST("/:id/settle", handlers.LeaveAndPay) // 離開結算 (renamed from /leave)
-				rentWithAuth.GET("", handlers.GetRentRecords)          // 查詢所有租用紀錄
-				rentWithAuth.GET("/:id", handlers.GetRentByID)         // 查詢特定租賃記錄
-				rentWithAuth.DELETE("/:id", handlers.CancelRent)       // 取消租用
+				rentWithAuth.POST("", handlers.RentParkingSpot)       // 租用車位
+				rentWithAuth.POST("/:id/leave", handlers.LeaveAndPay) // 離開結算
+				rentWithAuth.GET("", handlers.GetRentRecords)         // 查詢所有租用紀錄
+				rentWithAuth.GET("/:id", handlers.GetRentByID)        // 查詢特定租賃記錄
+				rentWithAuth.DELETE("/:id", handlers.CancelRent)      // 取消租用
 			}
 		}
 	}

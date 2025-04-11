@@ -33,15 +33,15 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 		return fmt.Errorf("invalid status: must be 'in_use' or 'idle'")
 	}
 
+	// 檢查日期重複性（AvailableDate 現在是 time.Time）
 	seenDates := make(map[string]bool)
 	for _, day := range availableDays {
-		if _, err := time.Parse("2006-01-02", day.AvailableDate); err != nil {
-			return fmt.Errorf("invalid date format in available_days: %s", day.AvailableDate)
+		// 將 time.Time 格式化為 YYYY-MM-DD 進行重複檢查
+		dateStr := day.AvailableDate.Format("2006-01-02")
+		if seenDates[dateStr] {
+			return fmt.Errorf("duplicate date in available_days: %s", dateStr)
 		}
-		if seenDates[day.AvailableDate] {
-			return fmt.Errorf("duplicate date in available_days: %s", day.AvailableDate)
-		}
-		seenDates[day.AvailableDate] = true
+		seenDates[dateStr] = true
 	}
 
 	var member models.Member
@@ -71,9 +71,9 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 		if err := tx.Create(&day).Error; err != nil {
 			tx.Rollback()
 			if gormErr, ok := err.(*mysql.MySQLError); ok && gormErr.Number == 1062 {
-				return fmt.Errorf("duplicate entry for spot_id %d and date %s", spot.SpotID, day.AvailableDate)
+				return fmt.Errorf("duplicate entry for spot_id %d and date %s", spot.SpotID, day.AvailableDate.Format("2006-01-02"))
 			}
-			return fmt.Errorf("failed to insert available date %s: %w", day.AvailableDate, err)
+			return fmt.Errorf("failed to insert available date %s: %w", day.AvailableDate.Format("2006-01-02"), err)
 		}
 	}
 
@@ -297,9 +297,15 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 				return fmt.Errorf("failed to delete existing available days: %w", err)
 			}
 			for _, day := range dayInputs {
+				// 將 string 類型的日期解析為 time.Time
+				parsedDate, err := time.Parse("2006-01-02", day.Date)
+				if err != nil {
+					tx.Rollback()
+					return fmt.Errorf("failed to parse date %s: %w", day.Date, err)
+				}
 				if err := tx.Create(&models.ParkingSpotAvailableDay{
 					SpotID:        id,
-					AvailableDate: day.Date,
+					AvailableDate: parsedDate, // 使用解析後的 time.Time
 					IsAvailable:   day.IsAvailable,
 				}).Error; err != nil {
 					tx.Rollback()

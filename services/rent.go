@@ -13,6 +13,7 @@ import (
 )
 
 // RentParkingSpot 租用車位
+// RentParkingSpot 租用車位
 func RentParkingSpot(rent *models.Rent) error {
 	var spot models.ParkingSpot
 	// 驗證 member_id
@@ -58,7 +59,8 @@ func RentParkingSpot(rent *models.Rent) error {
 	for current := start; !current.After(end); current = current.Add(24 * time.Hour) {
 		currentDate := current.Format("2006-01-02")
 		for _, day := range availableDays {
-			if day.AvailableDate == currentDate && day.IsAvailable {
+			// 將 AvailableDate 格式化為字符串進行比較
+			if day.AvailableDate.Format("2006-01-02") == currentDate && day.IsAvailable {
 				isAvailable = true
 				break
 			}

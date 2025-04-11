@@ -7,6 +7,7 @@ import (
 	"project01/models"
 	"project01/services"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -37,6 +38,28 @@ func ShareParkingSpot(c *gin.Context) {
 		return
 	}
 
+	// 從 token 中提取當前用戶的 member_id
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		log.Printf("Failed to get member_id from context")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token")
+		return
+	}
+
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		log.Printf("Invalid member_id type in context")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type")
+		return
+	}
+
+	// 檢查請求中的 member_id 是否與當前用戶一致
+	if currentMemberIDInt != input.MemberID {
+		log.Printf("Member %d attempted to share parking spot for member %d", currentMemberIDInt, input.MemberID)
+		ErrorResponse(c, http.StatusForbidden, "無權限", "you can only share parking spots for yourself")
+		return
+	}
+
 	spot := &models.ParkingSpot{
 		MemberID:         input.MemberID,
 		ParkingType:      input.ParkingType,
@@ -47,7 +70,7 @@ func ShareParkingSpot(c *gin.Context) {
 		DailyMaxPrice:    input.DailyMaxPrice,
 		Longitude:        input.Longitude,
 		Latitude:         input.Latitude,
-		Status:           "idle", // 設置預設值，避免服務層處理
+		Status:           "idle",
 	}
 
 	// 設置預設價格
@@ -61,8 +84,15 @@ func ShareParkingSpot(c *gin.Context) {
 	// 處理可用日期
 	availableDays := make([]models.ParkingSpotAvailableDay, len(input.AvailableDays))
 	for i, day := range input.AvailableDays {
+		// 將 string 類型的日期解析為 time.Time
+		parsedDate, err := time.Parse("2006-01-02", day.Date)
+		if err != nil {
+			log.Printf("Invalid date format for available_days: %v", err)
+			ErrorResponse(c, http.StatusBadRequest, "無效的日期格式", "date must be in YYYY-MM-DD format")
+			return
+		}
 		availableDays[i] = models.ParkingSpotAvailableDay{
-			AvailableDate: day.Date,
+			AvailableDate: parsedDate, // 使用解析後的 time.Time
 			IsAvailable:   day.IsAvailable,
 		}
 	}

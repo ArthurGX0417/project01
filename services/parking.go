@@ -29,16 +29,10 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 	if spot.PricingType != "monthly" && spot.PricingType != "hourly" {
 		return fmt.Errorf("invalid pricing_type: must be 'monthly' or 'hourly'")
 	}
-	if spot.Status == "" {
-		spot.Status = "idle"
-	}
 	if spot.Status != "in_use" && spot.Status != "idle" {
 		return fmt.Errorf("invalid status: must be 'in_use' or 'idle'")
 	}
 
-	if len(availableDays) == 0 {
-		return fmt.Errorf("available_days cannot be empty")
-	}
 	seenDates := make(map[string]bool)
 	for _, day := range availableDays {
 		if _, err := time.Parse("2006-01-02", day.AvailableDate); err != nil {
@@ -63,13 +57,6 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 		return fmt.Errorf("only shared_owner can share parking spots")
 	}
 
-	if spot.PricePerHalfHour == 0 {
-		spot.PricePerHalfHour = 20
-	}
-	if spot.DailyMaxPrice == 0 {
-		spot.DailyMaxPrice = 300
-	}
-
 	tx := database.DB.Begin()
 
 	if err := tx.Create(spot).Error; err != nil {
@@ -78,6 +65,7 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 		return fmt.Errorf("failed to create parking spot: %w", err)
 	}
 
+	// 如果提供了 availableDays，則創建可用日期記錄
 	for _, day := range availableDays {
 		day.SpotID = spot.SpotID
 		if err := tx.Create(&day).Error; err != nil {

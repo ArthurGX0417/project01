@@ -7,6 +7,7 @@ import (
 	"project01/database"
 	"project01/models"
 	"project01/utils"
+	"regexp"
 
 	"gorm.io/gorm"
 )
@@ -27,6 +28,13 @@ func RegisterMember(member *models.Member) error {
 	} else if err != gorm.ErrRecordNotFound {
 		log.Printf("Failed to check for duplicate phone: %v", err)
 		return fmt.Errorf("failed to check for duplicate phone: %w", err)
+	}
+
+	// 驗證密碼（至少 8 個字元，包含字母和數字）
+	if len(member.Password) < 8 ||
+		!regexp.MustCompile(`[a-zA-Z]`).MatchString(member.Password) ||
+		!regexp.MustCompile(`[0-9]`).MatchString(member.Password) {
+		return fmt.Errorf("password must be at least 8 characters and include both letters and numbers")
 	}
 
 	// 驗證 payment_method 和 role
@@ -202,6 +210,12 @@ func UpdateMember(id int, updatedFields map[string]interface{}) error {
 			passwordStr, ok := value.(string)
 			if !ok {
 				return fmt.Errorf("invalid password type: must be a string")
+			}
+			// 驗證密碼（至少 8 個字元，包含字母和數字）
+			if len(passwordStr) < 8 ||
+				!regexp.MustCompile(`[a-zA-Z]`).MatchString(passwordStr) ||
+				!regexp.MustCompile(`[0-9]`).MatchString(passwordStr) {
+				return fmt.Errorf("password must be at least 8 characters and include both letters and numbers")
 			}
 			hashedPassword, err := utils.HashPassword(passwordStr)
 			if err != nil {

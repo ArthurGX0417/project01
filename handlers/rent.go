@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"log"
+	"math"
 	"net/http"
 	"project01/database"
 	"project01/models"
@@ -199,24 +200,27 @@ func CancelRent(c *gin.Context) {
 
 // LeaveAndPay 離開和付款資料檢查
 func LeaveAndPay(c *gin.Context) {
+	// 解析租賃 ID
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		log.Printf("Invalid rent ID: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
-			"message": "無效的租用ID",
-			"error":   err.Error(),
+			"message": "無效的租賃 ID",
+			"error":   "invalid rent ID: must be a number",
 		})
 		return
 	}
 
+	// 查詢租賃記錄，預加載相關資料
 	var rent models.Rent
-	if err := database.DB.Preload("Member").Preload("ParkingSpot").First(&rent, id).Error; err != nil {
+	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").Preload("ParkingSpot.Rents").First(&rent, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status":  false,
-				"message": "租用記錄不存在",
+				"message": "租賃記錄不存在",
+				"error":   "record not found",
 			})
 			return
 		}
@@ -224,7 +228,7 @@ func LeaveAndPay(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
 			"message": "結算失敗",
-			"error":   err.Error(),
+			"error":   "failed to get rent record: database error",
 		})
 		return
 	}
@@ -234,55 +238,80 @@ func LeaveAndPay(c *gin.Context) {
 		log.Printf("Attempted to settle already settled rent ID %d", id)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
-			"message": "租用已結算，無法再次結算",
+			"message": "無法結算",
+			"error":   "租賃已結束",
 		})
 		return
 	}
 
-	// 解析請求中的 actual_end_time
+	// 解析請求中的 leave_time
 	var input struct {
-		ActualEndTime string `json:"actual_end_time" binding:"required"`
+		LeaveTime string `json:"leave_time" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Printf("Invalid input: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
-			"message": "無效的輸入數據",
+			"message": "無效的輸入資料",
 			"error":   err.Error(),
 		})
 		return
 	}
 
-	actualEndTime, err := time.Parse(time.RFC3339, input.ActualEndTime)
+	leaveTime, err := time.Parse(time.RFC3339, input.LeaveTime)
 	if err != nil {
-		log.Printf("Invalid actual_end_time format: %v", err)
+		log.Printf("Invalid leave_time format: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
-			"message": "實際離開時間格式錯誤",
-			"error":   err.Error(),
+			"message": "無效的離開時間",
+			"error":   "leave_time must be in ISO 8601 format (e.g., 2025-04-11T12:30:00Z)",
 		})
 		return
 	}
 
-	// 調用 services.LeaveAndPay 計算費用並更新
-	totalCost, err := services.LeaveAndPay(id, actualEndTime)
-	if err != nil {
-		log.Printf("Failed to process leave and pay: %v", err)
+	// 檢查離開時間是否早於開始時間
+	if leaveTime.Before(rent.StartTime) {
+		log.Printf("Leave time %v is before start time %v for rent ID %d", leaveTime, rent.StartTime, id)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的離開時間",
+			"error":   "離開時間必須晚於租賃開始時間",
+		})
+		return
+	}
+
+	// 計算費用
+	var totalCost float64
+	durationHours := leaveTime.Sub(rent.StartTime).Hours()
+	durationDays := durationHours / 24
+
+	if rent.ParkingSpot.PricingType == "monthly" {
+		// 按月計費，假設月費為 5000（可根據需求調整）
+		const monthlyRate = 5000.0
+		months := math.Ceil(durationDays / 30) // 每 30 天算一個月
+		totalCost = months * monthlyRate
+	} else {
+		// 按小時計費
+		halfHours := math.Ceil(durationHours * 2) // 每半小時計費一次
+		totalCost = halfHours * float64(rent.ParkingSpot.PricePerHalfHour)
+		// 考慮每日上限
+		dailyMax := float64(rent.ParkingSpot.DailyMaxPrice)
+		days := math.Ceil(durationDays)
+		maxCost := dailyMax * days
+		totalCost = math.Min(totalCost, maxCost)
+	}
+
+	// 更新租賃記錄
+	rent.ActualEndTime = &leaveTime
+	rent.TotalCost = totalCost
+
+	// 保存更新
+	if err := database.DB.Save(&rent).Error; err != nil {
+		log.Printf("Failed to update rent: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
 			"message": "結算失敗",
-			"error":   err.Error(),
-		})
-		return
-	}
-
-	// 重新加載更新後的租用記錄
-	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").First(&rent, id).Error; err != nil {
-		log.Printf("Failed to reload rent data: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  false,
-			"message": "載入租用資料失敗",
-			"error":   err.Error(),
+			"error":   "failed to update rent record: database error",
 		})
 		return
 	}
@@ -294,12 +323,22 @@ func LeaveAndPay(c *gin.Context) {
 		availableDays = []models.ParkingSpotAvailableDay{}
 	}
 
+	// 重新加載更新後的租賃記錄
+	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").Preload("ParkingSpot.Rents").First(&rent, id).Error; err != nil {
+		log.Printf("Failed to reload rent data: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "結算失敗",
+			"error":   "failed to reload rent data: database error",
+		})
+		return
+	}
+
+	// 返回回應
 	c.JSON(http.StatusOK, gin.H{
-		"status":          true,
-		"message":         "結算成功",
-		"actual_end_time": rent.ActualEndTime,
-		"total_cost":      totalCost,
-		"data":            rent.ToResponse(availableDays),
+		"status":  true,
+		"message": "離開結算成功",
+		"data":    rent.ToResponse(availableDays),
 	})
 }
 

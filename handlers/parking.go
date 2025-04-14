@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"project01/database"
 	"project01/models"
 	"project01/services"
 	"strconv"
@@ -116,25 +117,64 @@ func ShareParkingSpot(c *gin.Context) {
 }
 
 func GetAvailableParkingSpots(c *gin.Context) {
-	location := c.Query("location")
-	date := c.Query("date")
-
-	// 接收所有三個返回值
-	spots, availableDaysList, err := services.GetAvailableParkingSpots(location, date)
-	if err != nil {
-		log.Printf("Failed to get available parking spots: %v", err)
-		ErrorResponse(c, http.StatusInternalServerError, "查詢可用停車位失敗", err.Error())
+	// 獲取日期參數
+	dateStr := c.Query("date")
+	if dateStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "查詢失敗",
+			"error":   "請提供日期參數",
+		})
 		return
 	}
 
-	// 將 availableDaysList 與 spots 關聯起來
-	spotResponses := make([]models.ParkingSpotResponse, len(spots))
-	for i, spot := range spots {
-		// 為每個停車位設置可用日期
-		spotResponses[i] = spot.ToResponse(availableDaysList[i])
+	// 驗證日期格式（應為 YYYY-MM-DD）
+	_, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "查詢失敗",
+			"error":   fmt.Sprintf("無效的日期格式: %v", err),
+		})
+		return
 	}
 
-	SuccessResponse(c, http.StatusOK, "查詢成功", spotResponses)
+	// 查詢所有車位，並預載入關聯資料
+	var parkingSpots []models.ParkingSpot
+	if err := database.DB.
+		Preload("Member").
+		Preload("Rents").
+		Preload("AvailableDays", "available_date = ? AND is_available = ?", dateStr, true).
+		Where("status = ?", "idle").
+		Find(&parkingSpots).Error; err != nil {
+		log.Printf("Failed to get parking spots: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "查詢失敗",
+			"error":   fmt.Sprintf("failed to get parking spots: %v", err),
+		})
+		return
+	}
+
+	// 過濾車位：只保留有可用日期的車位
+	var availableSpots []models.ParkingSpot
+	for _, spot := range parkingSpots {
+		if len(spot.AvailableDays) > 0 { // 如果有符合條件的 AvailableDays
+			availableSpots = append(availableSpots, spot)
+		}
+	}
+
+	// 將結果轉換為回應格式
+	availableSpotsResponse := make([]models.ParkingSpotResponse, len(availableSpots))
+	for i, spot := range availableSpots {
+		availableSpotsResponse[i] = spot.ToResponse(spot.AvailableDays)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "查詢成功",
+		"data":    availableSpotsResponse,
+	})
 }
 
 func GetParkingSpot(c *gin.Context) {

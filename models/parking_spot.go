@@ -2,7 +2,7 @@ package models
 
 type ParkingSpot struct {
 	SpotID           int                       `json:"spot_id" gorm:"primaryKey;autoIncrement;type:INT"`
-	MemberID         int                       `json:"member_id" gorm:"index;not null;type:INT" binding:"required"`
+	MemberID         int                       `json:"member_id" gorm:"index;not null;type:INT;column:member_id" binding:"required"`
 	ParkingType      string                    `json:"parking_type" gorm:"type:enum('mechanical', 'flat');not null" binding:"required,oneof=mechanical flat"`
 	FloorLevel       string                    `json:"floor_level" gorm:"type:varchar(20)" binding:"omitempty,max=20"`
 	Location         string                    `json:"location" gorm:"type:varchar(50);not null" binding:"required,max=50"`
@@ -12,7 +12,7 @@ type ParkingSpot struct {
 	DailyMaxPrice    float64                   `json:"daily_max_price" gorm:"type:decimal(10,2);default:300.00" binding:"gte=0"`
 	Longitude        float64                   `json:"longitude" gorm:"type:decimal(9,6);default:0.0" binding:"gte=-180,lte=180"`
 	Latitude         float64                   `json:"latitude" gorm:"type:decimal(9,6);default:0.0" binding:"gte=-90,lte=90"`
-	Member           Member                    `json:"-" gorm:"foreignKey:member_id;references:MemberID"`
+	Member           Member                    `json:"-" gorm:"foreignKey:MemberID;references:MemberID"`
 	Rents            []Rent                    `json:"-" gorm:"foreignKey:spot_id;references:SpotID"`
 	AvailableDays    []ParkingSpotAvailableDay `json:"-" gorm:"foreignKey:SpotID;references:SpotID"`
 }

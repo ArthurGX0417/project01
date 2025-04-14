@@ -5,7 +5,7 @@ import "time"
 type ParkingSpotAvailableDay struct {
 	ID            int       `json:"id" gorm:"primaryKey"`
 	SpotID        int       `json:"spot_id" gorm:"column:parking_spot_id"`
-	AvailableDate time.Time `json:"available_date" gorm:"type:date"` // 改為 time.Time
+	AvailableDate time.Time `json:"available_date" gorm:"type:date;not null"` // 添加 not null 約束
 	IsAvailable   bool      `json:"is_available" gorm:"type:tinyint(1);default:1"`
 }
 

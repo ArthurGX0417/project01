@@ -104,15 +104,15 @@ func Path(router *gin.RouterGroup) {
 		parking := v1.Group("/parking")
 		{
 			// 公開路由：不需要 token 驗證
-			parking.POST("share", handlers.ShareParkingSpot)             // 共享車位
-			parking.GET("/available", handlers.GetAvailableParkingSpots) // 查詢可用車位
+			parking.POST("share", handlers.ShareParkingSpot) // 共享車位
 
 			// 受保護路由：需要 token 驗證
 			parkingWithAuth := parking.Group("")
 			parkingWithAuth.Use(AuthMiddleware())
 			{
-				parkingWithAuth.GET("/:id", handlers.GetParkingSpot)    // 查詢特定車位
-				parkingWithAuth.PUT("/:id", handlers.UpdateParkingSpot) // 更新車位信息
+				parking.GET("/available", handlers.GetAvailableParkingSpots) // 查詢可用車位
+				parkingWithAuth.GET("/:id", handlers.GetParkingSpot)         // 查詢特定車位
+				parkingWithAuth.PUT("/:id", handlers.UpdateParkingSpot)      // 更新車位信息
 			}
 		}
 

@@ -6,12 +6,18 @@ import (
 	"project01/handlers"
 	"strings"
 
-	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5" // 更新為 jwt/v5
 )
 
-// 定義一個密鑰，用於簽署和驗證 JWT（應該存放在環境變數中）
+// 定義一個密鑰，用於簽署和驗證 JWT
 var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+
+func init() {
+	if len(jwtSecret) == 0 {
+		panic("JWT_SECRET environment variable is not set")
+	}
+}
 
 // AuthMiddleware 驗證 JWT token
 func AuthMiddleware() gin.HandlerFunc {
@@ -43,28 +49,27 @@ func AuthMiddleware() gin.HandlerFunc {
 			return jwtSecret, nil
 		})
 
-		if err != nil || !token.Valid {
+		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "無效的 token"})
 			c.Abort()
 			return
 		}
 
-		// 從 token 中提取會員 ID（假設 token 中包含 member_id）
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok || !token.Valid {
+		// 檢查 token 是否有效
+		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+			// 將 member_id 存入上下文
+			memberID, ok := claims["member_id"].(float64)
+			if !ok {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "無效的會員 ID"})
+				c.Abort()
+				return
+			}
+			c.Set("member_id", int(memberID))
+		} else {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "無效的 token 內容"})
 			c.Abort()
 			return
 		}
-
-		// 將 member_id 存入上下文，供後續處理函數使用
-		memberID, ok := claims["member_id"].(float64) // JWT 中數字以 float64 儲存
-		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "無效的會員 ID"})
-			c.Abort()
-			return
-		}
-		c.Set("member_id", int(memberID))
 
 		// 繼續處理下一個處理函數
 		c.Next()

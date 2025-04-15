@@ -29,11 +29,14 @@ func init() {
 	if secret == "" {
 		log.Fatal("JWT_SECRET environment variable is not set")
 	}
+	if len(secret) < 32 {
+		log.Fatal("JWT_SECRET must be at least 32 bytes long")
+	}
 	jwtSecret = []byte(secret)
 	log.Printf("Loaded JWT_SECRET in handlers: %s...", secret[:4])
 }
 
-// 註冊會員資料檢查
+// 註冊會員資料檢查（保持不變）
 func RegisterMember(c *gin.Context) {
 	var member models.Member
 	if err := c.ShouldBindJSON(&member); err != nil {
@@ -122,9 +125,9 @@ func LoginMember(c *gin.Context) {
 		return
 	}
 
-	// 驗證密碼
-	if len(loginData.Password) < 8 {
-		ErrorResponse(c, http.StatusBadRequest, "密碼格式錯誤", "password must be at least 8 characters")
+	// 驗證密碼（與 RegisterMember 一致）
+	if len(loginData.Password) < 8 || !regexp.MustCompile(`[a-zA-Z]`).MatchString(loginData.Password) || !regexp.MustCompile(`[0-9]`).MatchString(loginData.Password) {
+		ErrorResponse(c, http.StatusBadRequest, "密碼必須至少8個字符，包含字母和數字", "invalid password format")
 		return
 	}
 
@@ -132,7 +135,14 @@ func LoginMember(c *gin.Context) {
 	member, err := services.LoginMember(loginData.Email, loginData.Phone, loginData.Password)
 	if err != nil {
 		log.Printf("Login failed for email %s or phone %s: %v", loginData.Email, loginData.Phone, err)
-		ErrorResponse(c, http.StatusUnauthorized, "登入失敗，檢查電子郵件、電話或密碼", err.Error())
+		// 根據錯誤類型返回更具體的訊息
+		if err.Error() == "member not found" {
+			ErrorResponse(c, http.StatusUnauthorized, "電子郵件或電話不存在", err.Error())
+		} else if err.Error() == "invalid password" {
+			ErrorResponse(c, http.StatusUnauthorized, "密碼錯誤", err.Error())
+		} else {
+			ErrorResponse(c, http.StatusUnauthorized, "登入失敗，請稍後再試", err.Error())
+		}
 		return
 	}
 
@@ -149,13 +159,12 @@ func LoginMember(c *gin.Context) {
 		return
 	}
 
-	// 記錄生成的 token（僅記錄前 10 個字符，避免安全風險）
-	log.Printf("Generated JWT token: %s...", tokenString[:10])
+	// 記錄登入成功（避免記錄 token）
+	log.Printf("Member logged in successfully: email=%s, member_id=%d", member.Email, member.MemberID)
 
-	log.Printf("Member logged in successfully: email=%s", member.Email)
-	SuccessResponse(c, http.StatusOK, "登入成功", gin.H{
-		"member": member.ToResponse(),
-		"token":  tokenString,
+	// 直接返回 token，匹配前端期望
+	c.JSON(http.StatusOK, gin.H{
+		"token": tokenString,
 	})
 }
 

@@ -24,7 +24,6 @@ type RentInput struct {
 
 // RentParkingSpot 租車位資料檢查
 func RentParkingSpot(c *gin.Context) {
-	// 綁定請求到 RentInput 結構體
 	var input RentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Printf("Invalid input data: %v", err)
@@ -36,7 +35,6 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	// 從 token 中提取當前用戶的 member_id
 	currentMemberID, exists := c.Get("member_id")
 	if !exists {
 		log.Printf("Failed to get member_id from context")
@@ -59,7 +57,6 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	// 檢查請求中的 member_id 是否與當前用戶一致
 	if currentMemberIDInt != input.MemberID {
 		log.Printf("Member %d attempted to rent parking spot for member %d", currentMemberIDInt, input.MemberID)
 		c.JSON(http.StatusForbidden, gin.H{
@@ -70,7 +67,6 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	// 驗證 StartTime 是否在未來
 	if input.StartTime.Before(time.Now()) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
@@ -79,7 +75,14 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	// 檢查 WiFi 驗證
+	if !input.EndTime.After(input.StartTime) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "結束時間必須晚於開始時間",
+		})
+		return
+	}
+
 	wifiVerified, err := services.VerifyWifi(input.MemberID)
 	if err != nil {
 		log.Printf("Failed to verify WiFi for member %d: %v", input.MemberID, err)
@@ -98,7 +101,63 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	// 將 RentInput 轉換為 models.Rent
+	var parkingSpot models.ParkingSpot
+	if err := database.DB.Preload("Rents").First(&parkingSpot, input.SpotID).Error; err != nil {
+		log.Printf("Failed to find parking spot %d: %v", input.SpotID, err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  false,
+			"message": "車位不存在",
+			"error":   "parking spot not found",
+		})
+		return
+	}
+
+	if parkingSpot.Status != "available" {
+		log.Printf("Parking spot %d is not available", input.SpotID)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "車位不可用",
+			"error":   "parking spot is not available",
+		})
+		return
+	}
+
+	for _, rent := range parkingSpot.Rents {
+		if rent.ActualEndTime == nil {
+			log.Printf("Parking spot %d has an active rent", input.SpotID)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  false,
+				"message": "車位已被租用",
+				"error":   "parking spot has an active rent",
+			})
+			return
+		}
+		if (input.StartTime.Before(rent.EndTime) || input.StartTime.Equal(rent.EndTime)) &&
+			(input.EndTime.After(rent.StartTime) || input.EndTime.Equal(rent.StartTime)) {
+			log.Printf("New rent time range overlaps with existing rent for spot %d", input.SpotID)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  false,
+				"message": "車位在指定時間範圍內不可用",
+				"error":   "parking spot is not available for the specified time range",
+			})
+			return
+		}
+	}
+
+	var availableDay models.ParkingSpotAvailableDay
+	startDate := input.StartTime.Format("2006-01-02")
+	if err := database.DB.
+		Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", input.SpotID, startDate, true).
+		First(&availableDay).Error; err != nil {
+		log.Printf("Parking spot %d is not available on %s: %v", input.SpotID, startDate, err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "車位在指定日期不可用",
+			"error":   "parking spot is not available on the specified date",
+		})
+		return
+	}
+
 	rent := &models.Rent{
 		MemberID:  input.MemberID,
 		SpotID:    input.SpotID,
@@ -106,7 +165,6 @@ func RentParkingSpot(c *gin.Context) {
 		EndTime:   input.EndTime,
 	}
 
-	// 調用服務層方法
 	if err := services.RentParkingSpot(rent); err != nil {
 		log.Printf("Failed to rent parking spot %d for member %d: %v", rent.SpotID, rent.MemberID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -117,7 +175,17 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	// 預加載關聯數據，包括嵌套的 ParkingSpot.Member
+	parkingSpot.Status = "reserved" // 設置為 reserved，因為有未結束的租賃
+	if err := database.DB.Save(&parkingSpot).Error; err != nil {
+		log.Printf("Failed to update parking spot status for spot %d: %v", parkingSpot.SpotID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "更新車位狀態失敗",
+			"error":   err.Error(),
+		})
+		return
+	}
+
 	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").First(rent, rent.RentID).Error; err != nil {
 		log.Printf("Failed to preload rent data for rent ID %d: %v", rent.RentID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -128,7 +196,6 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	// 獲取車位的可用日期
 	availableDays, err := services.FetchAvailableDays(rent.SpotID)
 	if err != nil {
 		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
@@ -182,11 +249,71 @@ func CancelRent(c *gin.Context) {
 		return
 	}
 
+	var rent models.Rent
+	if err := database.DB.Preload("ParkingSpot").First(&rent, id).Error; err != nil {
+		log.Printf("Failed to find rent ID %d: %v", id, err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  false,
+			"message": "租用記錄不存在",
+			"error":   "rent record not found",
+		})
+		return
+	}
+
+	if rent.ActualEndTime != nil {
+		log.Printf("Attempted to cancel already settled rent ID %d", id)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無法取消",
+			"error":   "租賃已結算",
+		})
+		return
+	}
+
 	if err := services.CancelRent(id); err != nil {
 		log.Printf("Failed to cancel rent: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
 			"message": "取消租用失敗",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// 檢查是否有其他未結束的租賃
+	var activeRentCount int64
+	if err := database.DB.Model(&models.Rent{}). // 使用 models.Rent
+							Where("spot_id = ? AND actual_end_time IS NULL AND end_time >= ?", rent.SpotID, time.Now()).
+							Count(&activeRentCount).Error; err != nil {
+		log.Printf("Failed to check active rents for spot %d: %v", rent.SpotID, err)
+		activeRentCount = 0
+	}
+
+	// 檢查當天的可用性
+	var isDayAvailable bool
+	todayStr := time.Now().Format("2006-01-02")
+	var availableDayCount int64
+	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}). // 使用 models.ParkingSpotAvailableDay
+									Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", rent.SpotID, todayStr, true).
+									Count(&availableDayCount).Error; err != nil {
+		log.Printf("Failed to check available days for spot %d: %v", rent.SpotID, err)
+	}
+	isDayAvailable = availableDayCount > 0
+
+	// 更新車位狀態
+	if activeRentCount > 0 {
+		rent.ParkingSpot.Status = "reserved"
+	} else if isDayAvailable {
+		rent.ParkingSpot.Status = "available"
+	} else {
+		rent.ParkingSpot.Status = "occupied"
+	}
+
+	if err := database.DB.Save(&rent.ParkingSpot).Error; err != nil {
+		log.Printf("Failed to update parking spot status for spot %d: %v", rent.ParkingSpot.SpotID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "更新車位狀態失敗",
 			"error":   err.Error(),
 		})
 		return
@@ -200,7 +327,6 @@ func CancelRent(c *gin.Context) {
 
 // LeaveAndPay 離開和付款資料檢查
 func LeaveAndPay(c *gin.Context) {
-	// 解析租賃 ID
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
@@ -213,7 +339,6 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 查詢租賃記錄，預加載相關資料
 	var rent models.Rent
 	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").Preload("ParkingSpot.Rents").First(&rent, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -233,7 +358,6 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 檢查是否已結算
 	if rent.ActualEndTime != nil {
 		log.Printf("Attempted to settle already settled rent ID %d", id)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -244,7 +368,6 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 解析請求中的 leave_time
 	var input struct {
 		LeaveTime string `json:"leave_time" binding:"required"`
 	}
@@ -269,7 +392,6 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 檢查離開時間是否早於開始時間
 	if leaveTime.Before(rent.StartTime) {
 		log.Printf("Leave time %v is before start time %v for rent ID %d", leaveTime, rent.StartTime, id)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -280,32 +402,26 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 計算費用
 	var totalCost float64
 	durationHours := leaveTime.Sub(rent.StartTime).Hours()
 	durationDays := durationHours / 24
 
 	if rent.ParkingSpot.PricingType == "monthly" {
-		// 按月計費，假設月費為 5000（可根據需求調整）
 		const monthlyRate = 5000.0
-		months := math.Ceil(durationDays / 30) // 每 30 天算一個月
+		months := math.Ceil(durationDays / 30)
 		totalCost = months * monthlyRate
 	} else {
-		// 按小時計費
-		halfHours := math.Ceil(durationHours * 2) // 每半小時計費一次
+		halfHours := math.Ceil(durationHours * 2)
 		totalCost = halfHours * float64(rent.ParkingSpot.PricePerHalfHour)
-		// 考慮每日上限
 		dailyMax := float64(rent.ParkingSpot.DailyMaxPrice)
 		days := math.Ceil(durationDays)
 		maxCost := dailyMax * days
 		totalCost = math.Min(totalCost, maxCost)
 	}
 
-	// 更新租賃記錄
 	rent.ActualEndTime = &leaveTime
 	rent.TotalCost = totalCost
 
-	// 保存更新
 	if err := database.DB.Save(&rent).Error; err != nil {
 		log.Printf("Failed to update rent: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -316,14 +432,51 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 獲取車位的可用日期
+	// 檢查是否有其他未結束的租賃
+	var activeRentCount int64
+	if err := database.DB.Model(&models.Rent{}). // 使用 models.Rent
+							Where("spot_id = ? AND actual_end_time IS NULL AND end_time >= ?", rent.SpotID, time.Now()).
+							Count(&activeRentCount).Error; err != nil {
+		log.Printf("Failed to check active rents for spot %d: %v", rent.SpotID, err)
+		activeRentCount = 0
+	}
+
+	// 檢查當天的可用性
+	var isDayAvailable bool
+	todayStr := time.Now().Format("2006-01-02")
+	var availableDayCount int64
+	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}). // 使用 models.ParkingSpotAvailableDay
+									Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", rent.SpotID, todayStr, true).
+									Count(&availableDayCount).Error; err != nil {
+		log.Printf("Failed to check available days for spot %d: %v", rent.SpotID, err)
+	}
+	isDayAvailable = availableDayCount > 0
+
+	// 更新車位狀態
+	if activeRentCount > 0 {
+		rent.ParkingSpot.Status = "reserved"
+	} else if isDayAvailable {
+		rent.ParkingSpot.Status = "available"
+	} else {
+		rent.ParkingSpot.Status = "occupied"
+	}
+
+	if err := database.DB.Save(&rent.ParkingSpot).Error; err != nil {
+		log.Printf("Failed to update parking spot status for spot %d: %v", rent.ParkingSpot.SpotID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "結算失敗",
+			"error":   "failed to update parking spot status: database error",
+		})
+		return
+	}
+
 	availableDays, err := services.FetchAvailableDays(rent.SpotID)
 	if err != nil {
 		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
 		availableDays = []models.ParkingSpotAvailableDay{}
 	}
 
-	// 重新加載更新後的租賃記錄
 	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").Preload("ParkingSpot.Rents").First(&rent, id).Error; err != nil {
 		log.Printf("Failed to reload rent data: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -334,7 +487,6 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 返回回應
 	c.JSON(http.StatusOK, gin.H{
 		"status":  true,
 		"message": "離開結算成功",

@@ -1,17 +1,19 @@
 package models
 
-import "time"
+import (
+	"time"
+)
 
 type Rent struct {
 	RentID        int         `json:"rent_id" gorm:"primaryKey;autoIncrement;type:INT"`
-	MemberID      int         `json:"member_id" gorm:"index;not null;type:INT" binding:"required"`
-	SpotID        int         `json:"spot_id" gorm:"index;not null;type:INT" binding:"required"`
-	StartTime     time.Time   `json:"start_time" gorm:"not null;type:DATETIME" binding:"required"`
-	EndTime       time.Time   `json:"end_time" gorm:"not null;type:DATETIME" binding:"required"`
-	ActualEndTime *time.Time  `json:"actual_end_time" gorm:"type:DATETIME"`
-	TotalCost     float64     `json:"total_cost" gorm:"type:decimal(10,2);default:0.0"`
-	Member        Member      `json:"-" gorm:"foreignKey:member_id;references:MemberID"`
-	ParkingSpot   ParkingSpot `json:"-" gorm:"foreignKey:spot_id;references:SpotID"`
+	MemberID      int         `json:"member_id" gorm:"index;not null;type:INT;column:member_id" binding:"required"`
+	SpotID        int         `json:"spot_id" gorm:"index;not null;type:INT;column:spot_id" binding:"required"`
+	StartTime     time.Time   `json:"start_time" gorm:"type:datetime;not null" binding:"required"`
+	EndTime       time.Time   `json:"end_time" gorm:"type:datetime;not null" binding:"required"`
+	ActualEndTime *time.Time  `json:"actual_end_time" gorm:"type:datetime"`
+	TotalCost     float64     `json:"total_cost" gorm:"type:decimal(10,2);default:0.00"`
+	Member        Member      `json:"-" gorm:"foreignKey:MemberID;references:MemberID"`
+	ParkingSpot   ParkingSpot `json:"-" gorm:"foreignKey:SpotID;references:SpotID"`
 }
 
 func (Rent) TableName() string {

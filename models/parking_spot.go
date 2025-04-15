@@ -1,5 +1,10 @@
 package models
 
+import (
+	"log"
+	"project01/database"
+)
+
 type ParkingSpot struct {
 	SpotID           int                       `json:"spot_id" gorm:"primaryKey;autoIncrement;type:INT"`
 	MemberID         int                       `json:"member_id" gorm:"index;not null;type:INT;column:member_id" binding:"required"`
@@ -7,7 +12,7 @@ type ParkingSpot struct {
 	FloorLevel       string                    `json:"floor_level" gorm:"type:varchar(20)" binding:"omitempty,max=20"`
 	Location         string                    `json:"location" gorm:"type:varchar(50);not null" binding:"required,max=50"`
 	PricingType      string                    `json:"pricing_type" gorm:"type:enum('monthly', 'hourly');not null" binding:"required,oneof=monthly hourly"`
-	Status           string                    `json:"status" gorm:"type:enum('in_use', 'idle');not null" binding:"required,oneof=in_use idle"`
+	Status           string                    `json:"status" gorm:"type:enum('available', 'occupied', 'reserved');not null" binding:"required,oneof=available occupied reserved"`
 	PricePerHalfHour float64                   `json:"price_per_half_hour" gorm:"type:decimal(10,2);default:20.00" binding:"gte=0"`
 	DailyMaxPrice    float64                   `json:"daily_max_price" gorm:"type:decimal(10,2);default:300.00" binding:"gte=0"`
 	Longitude        float64                   `json:"longitude" gorm:"type:decimal(9,6);default:0.0" binding:"gte=-180,lte=180"`
@@ -19,11 +24,6 @@ type ParkingSpot struct {
 
 func (ParkingSpot) TableName() string {
 	return "parking_spot"
-}
-
-type AvailableDayResponse struct {
-	Date        string `json:"date"`
-	IsAvailable bool   `json:"is_available"`
 }
 
 type ParkingSpotResponse struct {
@@ -44,14 +44,33 @@ type ParkingSpotResponse struct {
 }
 
 func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay) ParkingSpotResponse {
-	rents := make([]RentResponse, len(p.Rents))
-	for i, rent := range p.Rents {
-		rents[i] = rent.ToResponse(nil) // Pass nil since RentResponse doesn't need availableDays
+	// 準備 rents 數據（如果未預載入，則查詢資料庫）
+	var rents []Rent
+	if p.Rents == nil {
+		if err := database.DB.Where("spot_id = ?", p.SpotID).Find(&rents).Error; err != nil {
+			log.Printf("Failed to fetch rents for spot %d: %v", p.SpotID, err)
+			rents = []Rent{}
+		}
+	} else {
+		rents = p.Rents
+	}
+
+	rentResponses := make([]RentResponse, len(rents))
+	for i, rent := range rents {
+		rentResponses[i] = rent.ToResponse(nil)
+	}
+
+	// 準備 availableDays 數據（如果未傳入，則查詢資料庫）
+	if availableDays == nil {
+		if err := database.DB.Where("parking_spot_id = ?", p.SpotID).Find(&availableDays).Error; err != nil {
+			log.Printf("Failed to fetch available days for spot %d: %v", p.SpotID, err)
+			availableDays = []ParkingSpotAvailableDay{}
+		}
 	}
 
 	days := make([]AvailableDayResponse, len(availableDays))
 	for i, day := range availableDays {
-		days[i] = day.ToResponse() // 使用 ParkingSpotAvailableDay 的 ToResponse 方法
+		days[i] = day.ToResponse()
 	}
 
 	return ParkingSpotResponse{
@@ -61,13 +80,13 @@ func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay) Parkin
 		FloorLevel:       p.FloorLevel,
 		Location:         p.Location,
 		PricingType:      p.PricingType,
-		Status:           p.Status,
+		Status:           p.Status, // 直接使用資料庫中的 status
 		PricePerHalfHour: p.PricePerHalfHour,
 		DailyMaxPrice:    p.DailyMaxPrice,
 		Longitude:        p.Longitude,
 		Latitude:         p.Latitude,
 		AvailableDays:    days,
 		Member:           p.Member.ToResponse(),
-		Rents:            rents,
+		Rents:            rentResponses,
 	}
 }

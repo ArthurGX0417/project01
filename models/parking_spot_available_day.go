@@ -3,21 +3,24 @@ package models
 import "time"
 
 type ParkingSpotAvailableDay struct {
-	ID            int       `json:"id" gorm:"primaryKey"`
-	SpotID        int       `json:"spot_id" gorm:"column:parking_spot_id"`
-	AvailableDate time.Time `json:"available_date" gorm:"type:date;not null"` // 添加 not null 約束
-	IsAvailable   bool      `json:"is_available" gorm:"type:tinyint(1);default:1"`
+	ID            int       `json:"id" gorm:"primaryKey;autoIncrement;type:INT"`
+	SpotID        int       `json:"parking_spot_id" gorm:"index;not null;type:INT;column:parking_spot_id" binding:"required"`
+	AvailableDate time.Time `json:"available_date" gorm:"type:date;not null" binding:"required"`
+	IsAvailable   bool      `json:"is_available" gorm:"type:tinyint(1);not null;default:1" binding:"required"`
 }
 
-// TableName 指定表名稱為 parking_spot_available_day
 func (ParkingSpotAvailableDay) TableName() string {
 	return "parking_spot_available_day"
 }
 
-// ToResponse 將 ParkingSpotAvailableDay 轉換為 AvailableDayResponse
-func (day *ParkingSpotAvailableDay) ToResponse() AvailableDayResponse {
+type AvailableDayResponse struct {
+	Date        string `json:"date"`
+	IsAvailable bool   `json:"is_available"`
+}
+
+func (p *ParkingSpotAvailableDay) ToResponse() AvailableDayResponse {
 	return AvailableDayResponse{
-		Date:        day.AvailableDate.Format("2006-01-02"), // 格式化為 YYYY-MM-DD
-		IsAvailable: day.IsAvailable,
+		Date:        p.AvailableDate.Format("2006-01-02"),
+		IsAvailable: p.IsAvailable,
 	}
 }

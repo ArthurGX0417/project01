@@ -71,7 +71,7 @@ func ShareParkingSpot(c *gin.Context) {
 		DailyMaxPrice:    input.DailyMaxPrice,
 		Longitude:        input.Longitude,
 		Latitude:         input.Latitude,
-		Status:           "idle",
+		Status:           "available", // 初始狀態為 available
 	}
 
 	// 設置預設價格
@@ -85,7 +85,6 @@ func ShareParkingSpot(c *gin.Context) {
 	// 處理可用日期
 	availableDays := make([]models.ParkingSpotAvailableDay, len(input.AvailableDays))
 	for i, day := range input.AvailableDays {
-		// 將 string 類型的日期解析為 time.Time
 		parsedDate, err := time.Parse("2006-01-02", day.Date)
 		if err != nil {
 			log.Printf("Invalid date format for available_days: %v", err)
@@ -93,7 +92,7 @@ func ShareParkingSpot(c *gin.Context) {
 			return
 		}
 		availableDays[i] = models.ParkingSpotAvailableDay{
-			AvailableDate: parsedDate, // 使用解析後的 time.Time
+			AvailableDate: parsedDate,
 			IsAvailable:   day.IsAvailable,
 		}
 	}
@@ -117,8 +116,8 @@ func ShareParkingSpot(c *gin.Context) {
 }
 
 func GetAvailableParkingSpots(c *gin.Context) {
-	// 獲取日期參數
 	dateStr := c.Query("date")
+	log.Printf("Received request with date: %s", dateStr)
 	if dateStr == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
@@ -128,9 +127,9 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		return
 	}
 
-	// 驗證日期格式（應為 YYYY-MM-DD）
 	date, err := time.Parse("2006-01-02", dateStr)
 	if err != nil {
+		log.Printf("Invalid date format: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "查詢失敗",
@@ -139,9 +138,9 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		return
 	}
 
-	// 檢查日期是否有效（嚴格檢查，例如 2025-02-30 應無效）
 	parsedDateStr := date.Format("2006-01-02")
 	if parsedDateStr != dateStr {
+		log.Printf("Invalid date (e.g., 2025-02-30 does not exist)")
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "查詢失敗",
@@ -150,10 +149,10 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		return
 	}
 
-	// 檢查日期是否為未來日期
 	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	if date.Before(today) {
+		log.Printf("Date must be today or in the future: %s", dateStr)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "查詢失敗",
@@ -162,12 +161,19 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		return
 	}
 
-	// 查詢所有車位，並預載入關聯資料
 	var parkingSpots []models.ParkingSpot
+	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
+	endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Nanosecond)
+
+	subQuery := database.DB.Model(&models.Rent{}).
+		Select("spot_id").
+		Where("actual_end_time IS NULL OR (end_time > ? AND start_time < ?)", startOfDay, endOfDay)
+
 	if err := database.DB.
 		Preload("Member").
 		Preload("Rents").
 		Preload("AvailableDays", "available_date = ? AND is_available = ?", dateStr, true).
+		Where("status = ? AND NOT EXISTS (?)", "available", subQuery). // 僅查詢 status 為 available 且無活躍租賃的車位
 		Find(&parkingSpots).Error; err != nil {
 		log.Printf("Failed to get parking spots: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -178,31 +184,15 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		return
 	}
 
-	// 過濾車位：檢查 AvailableDays 和 Rents
 	var availableSpots []models.ParkingSpot
-	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
-	endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Nanosecond)
 	for _, spot := range parkingSpots {
-		// 檢查是否有可用日期
-		if len(spot.AvailableDays) == 0 {
-			continue
-		}
-
-		// 檢查是否有未結束的租賃或時間重疊
-		isAvailable := true
-		for _, rent := range spot.Rents {
-			if rent.ActualEndTime == nil || (rent.EndTime.After(startOfDay) && rent.StartTime.Before(endOfDay)) {
-				isAvailable = false
-				break
-			}
-		}
-
-		if isAvailable {
+		if len(spot.AvailableDays) > 0 {
 			availableSpots = append(availableSpots, spot)
 		}
 	}
 
-	// 將結果轉換為回應格式
+	log.Printf("Found %d parking spots, %d available after filtering for date %s", len(parkingSpots), len(availableSpots), dateStr)
+
 	availableSpotsResponse := make([]models.ParkingSpotResponse, len(availableSpots))
 	for i, spot := range availableSpots {
 		availableSpotsResponse[i] = spot.ToResponse(spot.AvailableDays)

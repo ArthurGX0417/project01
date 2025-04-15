@@ -123,18 +123,41 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "查詢失敗",
-			"error":   "請提供日期參數",
+			"error":   "請提供 date 參數（格式為 YYYY-MM-DD）",
 		})
 		return
 	}
 
 	// 驗證日期格式（應為 YYYY-MM-DD）
-	_, err := time.Parse("2006-01-02", dateStr)
+	date, err := time.Parse("2006-01-02", dateStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "查詢失敗",
-			"error":   fmt.Sprintf("無效的日期格式: %v", err),
+			"error":   fmt.Sprintf("無效的日期格式，應為 YYYY-MM-DD: %v", err),
+		})
+		return
+	}
+
+	// 檢查日期是否有效（嚴格檢查，例如 2025-02-30 應無效）
+	parsedDateStr := date.Format("2006-01-02")
+	if parsedDateStr != dateStr {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "查詢失敗",
+			"error":   "無效的日期（例如 2025-02-30 不存在）",
+		})
+		return
+	}
+
+	// 檢查日期是否為未來日期
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if date.Before(today) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "查詢失敗",
+			"error":   "日期必須為今天或未來的日期",
 		})
 		return
 	}
@@ -145,21 +168,36 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		Preload("Member").
 		Preload("Rents").
 		Preload("AvailableDays", "available_date = ? AND is_available = ?", dateStr, true).
-		Where("status = ?", "idle").
 		Find(&parkingSpots).Error; err != nil {
 		log.Printf("Failed to get parking spots: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
 			"message": "查詢失敗",
-			"error":   fmt.Sprintf("failed to get parking spots: %v", err),
+			"error":   "failed to get parking spots: database error",
 		})
 		return
 	}
 
-	// 過濾車位：只保留有可用日期的車位
+	// 過濾車位：檢查 AvailableDays 和 Rents
 	var availableSpots []models.ParkingSpot
+	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
+	endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Nanosecond)
 	for _, spot := range parkingSpots {
-		if len(spot.AvailableDays) > 0 { // 如果有符合條件的 AvailableDays
+		// 檢查是否有可用日期
+		if len(spot.AvailableDays) == 0 {
+			continue
+		}
+
+		// 檢查是否有未結束的租賃或時間重疊
+		isAvailable := true
+		for _, rent := range spot.Rents {
+			if rent.ActualEndTime == nil || (rent.EndTime.After(startOfDay) && rent.StartTime.Before(endOfDay)) {
+				isAvailable = false
+				break
+			}
+		}
+
+		if isAvailable {
 			availableSpots = append(availableSpots, spot)
 		}
 	}

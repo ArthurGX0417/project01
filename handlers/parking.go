@@ -169,10 +169,9 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		Select("spot_id").
 		Where("(actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)", now, startOfDay, endOfDay)
 
-	// 使用 DATE() 函數只比較日期部分
 	if err := database.DB.
 		Preload("Member").
-		Preload("Rents").
+		Preload("Rents", "end_time >= ? OR actual_end_time IS NULL", now). // 只載入活躍租賃
 		Preload("AvailableDays", "DATE(available_date) = ? AND is_available = ?", dateStr, true).
 		Where("status = ? AND NOT EXISTS (?)", "available", subQuery).
 		Find(&parkingSpots).Error; err != nil {

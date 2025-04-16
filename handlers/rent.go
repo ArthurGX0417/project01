@@ -67,7 +67,7 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	if input.StartTime.Before(time.Now()) {
+	if input.StartTime.Before(time.Now().UTC()) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "開始時間必須在未來",

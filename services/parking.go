@@ -29,8 +29,8 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 	if spot.PricingType != "monthly" && spot.PricingType != "hourly" {
 		return fmt.Errorf("invalid pricing_type: must be 'monthly' or 'hourly'")
 	}
-	if spot.Status != "in_use" && spot.Status != "idle" {
-		return fmt.Errorf("invalid status: must be 'in_use' or 'idle'")
+	if spot.Status != "available" && spot.Status != "occupied" && spot.Status != "reserved" {
+		return fmt.Errorf("invalid status: must be 'available', 'occupied', or 'reserved'")
 	}
 
 	// 檢查日期重複性（AvailableDate 現在是 time.Time）

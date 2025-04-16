@@ -26,7 +26,7 @@ func RentParkingSpot(rent *models.Rent) error {
 	}
 
 	// 檢查車位是否空閒
-	if err := database.DB.Where("spot_id = ? AND status = ?", rent.SpotID, "idle").First(&spot).Error; err != nil {
+	if err := database.DB.Where("spot_id = ? AND status = ?", rent.SpotID, "available").First(&spot).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("Parking spot %d is not idle", rent.SpotID)
 			return fmt.Errorf("parking spot %d is not idle", rent.SpotID)
@@ -80,13 +80,6 @@ func RentParkingSpot(rent *models.Rent) error {
 	if err := database.DB.Create(rent).Error; err != nil {
 		log.Printf("Failed to rent parking spot: %v", err)
 		return fmt.Errorf("failed to rent parking spot: %w", err)
-	}
-
-	// 更新車位狀態為使用中
-	spot.Status = "in_use"
-	if err := database.DB.Save(&spot).Error; err != nil {
-		log.Printf("Failed to update parking spot status: %v", err)
-		return fmt.Errorf("failed to update parking spot status: %w", err)
 	}
 
 	log.Printf("Successfully rented parking spot %d with rent ID %d", rent.SpotID, rent.RentID)

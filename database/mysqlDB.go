@@ -33,8 +33,8 @@ func InitDB() {
 		log.Fatalf("Missing required database environment variables. Ensure DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, and DB_NAME are set in the .env file.")
 	}
 
-	// 動態構建 DSN
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local", user, password, host, port, name)
+	// 動態構建 DSN，設置 loc=UTC
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=UTC", user, password, host, port, name)
 	var err error
 
 	// 重試機制

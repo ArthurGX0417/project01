@@ -237,6 +237,57 @@ func UpdateParkingSpot(c *gin.Context) {
 		return
 	}
 
+	// 從 token 中提取當前用戶的 member_id
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		log.Printf("Failed to get member_id from context")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token")
+		return
+	}
+
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		log.Printf("Invalid member_id type in context")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type")
+		return
+	}
+
+	// 檢查車位是否存在並獲取車位資訊
+	spot, _, err := services.GetParkingSpotByID(id)
+	if err != nil {
+		log.Printf("Failed to get parking spot: %v", err)
+		ErrorResponse(c, http.StatusInternalServerError, "查詢車位失敗", err.Error())
+		return
+	}
+	if spot == nil {
+		ErrorResponse(c, http.StatusNotFound, "車位不存在", "parking spot not found")
+		return
+	}
+
+	// 檢查當前會員是否為車位的擁有者
+	if spot.MemberID != currentMemberIDInt {
+		log.Printf("Member %d attempted to update parking spot %d owned by member %d", currentMemberIDInt, id, spot.MemberID)
+		ErrorResponse(c, http.StatusForbidden, "無權限", "you are not the owner of this parking spot")
+		return
+	}
+
+	// 檢查會員角色是否為 shared_owner
+	member, err := services.GetMemberByID(currentMemberIDInt)
+	if err != nil {
+		log.Printf("Failed to get member: %v", err)
+		ErrorResponse(c, http.StatusInternalServerError, "查詢會員失敗", err.Error())
+		return
+	}
+	if member == nil {
+		ErrorResponse(c, http.StatusNotFound, "會員不存在", "member not found")
+		return
+	}
+	if member.Role != "shared_owner" {
+		log.Printf("Member %d with role %s attempted to update parking spot %d", currentMemberIDInt, member.Role, id)
+		ErrorResponse(c, http.StatusForbidden, "無權限", "only shared_owner can update parking spots")
+		return
+	}
+
 	var updatedFields map[string]interface{}
 	if err := c.ShouldBindJSON(&updatedFields); err != nil {
 		log.Printf("Invalid input data: %v", err)

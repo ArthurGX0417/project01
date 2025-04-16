@@ -149,8 +149,8 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		return
 	}
 
-	now := time.Now()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	if date.Before(today) {
 		log.Printf("Date must be today or in the future: %s", dateStr)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -167,13 +167,14 @@ func GetAvailableParkingSpots(c *gin.Context) {
 
 	subQuery := database.DB.Model(&models.Rent{}).
 		Select("spot_id").
-		Where("actual_end_time IS NULL OR (end_time > ? AND start_time < ?)", startOfDay, endOfDay)
+		Where("(actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)", now, startOfDay, endOfDay)
 
+	// 使用 DATE() 函數只比較日期部分
 	if err := database.DB.
 		Preload("Member").
 		Preload("Rents").
-		Preload("AvailableDays", "available_date = ? AND is_available = ?", dateStr, true).
-		Where("status = ? AND NOT EXISTS (?)", "available", subQuery). // 僅查詢 status 為 available 且無活躍租賃的車位
+		Preload("AvailableDays", "DATE(available_date) = ? AND is_available = ?", dateStr, true).
+		Where("status = ? AND NOT EXISTS (?)", "available", subQuery).
 		Find(&parkingSpots).Error; err != nil {
 		log.Printf("Failed to get parking spots: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{

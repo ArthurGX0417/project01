@@ -136,9 +136,9 @@ func Path(router *gin.RouterGroup) {
 			parkingWithAuth := parking.Group("")
 			parkingWithAuth.Use(AuthMiddleware())
 			{
-				parking.GET("/available", handlers.GetAvailableParkingSpots) // 查詢可用車位
-				parkingWithAuth.GET("/:id", handlers.GetParkingSpot)         // 查詢特定車位
-				parkingWithAuth.PUT("/:id", handlers.UpdateParkingSpot)      // 更新車位信息
+				parkingWithAuth.GET("/available", handlers.GetAvailableParkingSpots) // 查詢可用車位
+				parkingWithAuth.GET("/:id", handlers.GetParkingSpot)                 // 查詢特定車位
+				parkingWithAuth.PUT("/:id", handlers.UpdateParkingSpot)              // 更新車位信息
 			}
 		}
 

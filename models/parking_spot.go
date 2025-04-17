@@ -3,6 +3,7 @@ package models
 import (
 	"log"
 	"project01/database"
+	"time"
 )
 
 type ParkingSpot struct {
@@ -40,7 +41,7 @@ type ParkingSpotResponse struct {
 	Latitude         float64                `json:"latitude"`
 	AvailableDays    []AvailableDayResponse `json:"available_days"`
 	Member           MemberResponse         `json:"member"`
-	Rents            []RentResponse         `json:"rents"`
+	Rents            []SimpleRentResponse   `json:"rents"` // 使用 SimpleRentResponse
 }
 
 func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay) ParkingSpotResponse {
@@ -55,9 +56,19 @@ func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay) Parkin
 		rents = p.Rents
 	}
 
-	rentResponses := make([]RentResponse, len(rents))
-	for i, rent := range rents {
-		rentResponses[i] = rent.ToResponse(nil)
+	// 過濾已結束的租賃
+	now := time.Now().UTC()
+	var activeRents []Rent
+	for _, rent := range rents {
+		if rent.ActualEndTime == nil && rent.EndTime.After(now) {
+			activeRents = append(activeRents, rent)
+		}
+	}
+
+	// 使用 SimpleRentResponse 來避免嵌套多餘數據
+	rentResponses := make([]SimpleRentResponse, len(activeRents))
+	for i, rent := range activeRents {
+		rentResponses[i] = rent.ToSimpleResponse()
 	}
 
 	// 準備 availableDays 數據（如果未傳入，則查詢資料庫）
@@ -80,7 +91,7 @@ func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay) Parkin
 		FloorLevel:       p.FloorLevel,
 		Location:         p.Location,
 		PricingType:      p.PricingType,
-		Status:           p.Status, // 直接使用資料庫中的 status
+		Status:           p.Status,
 		PricePerHalfHour: p.PricePerHalfHour,
 		DailyMaxPrice:    p.DailyMaxPrice,
 		Longitude:        p.Longitude,

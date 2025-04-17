@@ -41,12 +41,13 @@ func AuthMiddleware() gin.HandlerFunc {
 		// 添加日誌以檢查 token
 		log.Printf("Parsing token: %s", tokenString)
 
+		// 明確要求檢查 exp 字段
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, jwt.ErrSignatureInvalid
 			}
 			return utils.JWTSecret, nil
-		})
+		}, jwt.WithExpirationRequired())
 
 		// 添加日誌以檢查錯誤
 		if err != nil {

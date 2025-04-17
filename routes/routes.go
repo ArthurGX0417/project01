@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"log"
 	"net/http"
 	"project01/handlers"
 	"project01/utils"
@@ -37,6 +38,9 @@ func AuthMiddleware() gin.HandlerFunc {
 
 		tokenString := parts[1]
 
+		// 添加日誌以檢查 token
+		log.Printf("Parsing token: %s", tokenString)
+
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, jwt.ErrSignatureInvalid
@@ -44,7 +48,9 @@ func AuthMiddleware() gin.HandlerFunc {
 			return utils.JWTSecret, nil
 		})
 
+		// 添加日誌以檢查錯誤
 		if err != nil {
+			log.Printf("Token parsing error: %v", err)
 			if err == jwt.ErrTokenExpired {
 				c.JSON(http.StatusUnauthorized, gin.H{
 					"status":  false,
@@ -61,6 +67,9 @@ func AuthMiddleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+
+		// 添加日誌以檢查 token 是否有效
+		log.Printf("Token is valid: %v", token.Valid)
 
 		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
 			memberID, ok := claims["member_id"].(float64)

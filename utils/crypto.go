@@ -8,10 +8,25 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+var JWTSecret []byte
+
+func InitJWTSecret() {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		log.Fatal("JWT_SECRET environment variable is not set")
+	}
+	if len(secret) < 32 {
+		log.Fatal("JWT_SECRET must be at least 32 bytes long")
+	}
+	JWTSecret = []byte(secret)
+	log.Printf("Loaded JWT_SECRET: %s...", secret[:4])
+}
 
 // HashPassword 使用 bcrypt 哈希密碼
 func HashPassword(password string) (string, error) {

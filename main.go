@@ -25,6 +25,9 @@ func main() {
 	}
 	log.Println("Crypto initialized successfully")
 
+	// 初始化 JWTSecret
+	utils.InitJWTSecret()
+
 	// 初始化資料庫
 	database.InitDB()
 

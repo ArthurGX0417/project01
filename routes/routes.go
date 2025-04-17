@@ -2,76 +2,88 @@ package routes
 
 import (
 	"net/http"
-	"os"
 	"project01/handlers"
+	"project01/utils"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5" // 更新為 jwt/v5
 )
 
-// 定義一個密鑰，用於簽署和驗證 JWT
-var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
-
-func init() {
-	if len(jwtSecret) == 0 {
-		panic("JWT_SECRET environment variable is not set")
-	}
-}
-
 // AuthMiddleware 驗證 JWT token
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 從 Authorization 標頭中獲取 token
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "缺少 Authorization 標頭"})
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "缺少 Authorization 標頭",
+				"error":   "Authorization header is required",
+			})
 			c.Abort()
 			return
 		}
 
-		// Authorization 標頭格式應為 "Bearer <token>"
 		parts := strings.Split(authHeader, " ")
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "無效的 Authorization 格式"})
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "無效的 Authorization 格式",
+				"error":   "Authorization header must be in the format 'Bearer <token>'",
+			})
 			c.Abort()
 			return
 		}
 
 		tokenString := parts[1]
 
-		// 解析並驗證 JWT
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			// 確保簽署方法是 HMAC
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, jwt.ErrSignatureInvalid
 			}
-			return jwtSecret, nil
+			return utils.JWTSecret, nil
 		})
 
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "無效的 token"})
+			if err == jwt.ErrTokenExpired {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"status":  false,
+					"message": "token 已過期",
+					"error":   "Token has expired",
+				})
+			} else {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"status":  false,
+					"message": "無效的 token",
+					"error":   err.Error(),
+				})
+			}
 			c.Abort()
 			return
 		}
 
-		// 檢查 token 是否有效
 		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-			// 將 member_id 存入上下文
 			memberID, ok := claims["member_id"].(float64)
 			if !ok {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "無效的會員 ID"})
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"status":  false,
+					"message": "無效的會員 ID",
+					"error":   "Invalid member_id in token",
+				})
 				c.Abort()
 				return
 			}
 			c.Set("member_id", int(memberID))
 		} else {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "無效的 token 內容"})
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "無效的 token 內容",
+				"error":   "Invalid token claims or token is not valid",
+			})
 			c.Abort()
 			return
 		}
 
-		// 繼續處理下一個處理函數
 		c.Next()
 	}
 }

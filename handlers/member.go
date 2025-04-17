@@ -3,10 +3,10 @@ package handlers
 import (
 	"log"
 	"net/http"
-	"os"
 	"project01/database"
 	"project01/models"
 	"project01/services"
+	"project01/utils"
 	"regexp"
 	"strconv"
 	"time"
@@ -20,21 +20,6 @@ var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]
 
 // 電話驗證字串 (例如：10 位數)
 var phoneRegex = regexp.MustCompile(`^[0-9]{10}$`)
-
-// 定義並初始化 jwtSecret
-var jwtSecret []byte
-
-func init() {
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		log.Fatal("JWT_SECRET environment variable is not set")
-	}
-	if len(secret) < 32 {
-		log.Fatal("JWT_SECRET must be at least 32 bytes long")
-	}
-	jwtSecret = []byte(secret)
-	log.Printf("Loaded JWT_SECRET in handlers: %s...", secret[:4])
-}
 
 // 註冊會員資料檢查（保持不變）
 func RegisterMember(c *gin.Context) {
@@ -106,36 +91,30 @@ func LoginMember(c *gin.Context) {
 		return
 	}
 
-	// 確保至少提供 email 或 phone
 	if loginData.Email == "" && loginData.Phone == "" {
 		log.Printf("No email or phone provided")
 		ErrorResponse(c, http.StatusBadRequest, "必須提供電子郵件或電話", "email and phone are empty")
 		return
 	}
 
-	// 驗證電子郵件
 	if loginData.Email != "" && !emailRegex.MatchString(loginData.Email) {
 		ErrorResponse(c, http.StatusBadRequest, "請提供有效的電子郵件地址", "invalid email format")
 		return
 	}
 
-	// 驗證電話
 	if loginData.Phone != "" && !phoneRegex.MatchString(loginData.Phone) {
 		ErrorResponse(c, http.StatusBadRequest, "請提供有效的電話號碼（10位數字）", "invalid phone format")
 		return
 	}
 
-	// 驗證密碼（與 RegisterMember 一致）
 	if len(loginData.Password) < 8 || !regexp.MustCompile(`[a-zA-Z]`).MatchString(loginData.Password) || !regexp.MustCompile(`[0-9]`).MatchString(loginData.Password) {
 		ErrorResponse(c, http.StatusBadRequest, "密碼必須至少8個字符，包含字母和數字", "invalid password format")
 		return
 	}
 
-	// 驗證登入憑證
 	member, err := services.LoginMember(loginData.Email, loginData.Phone, loginData.Password)
 	if err != nil {
 		log.Printf("Login failed for email %s or phone %s: %v", loginData.Email, loginData.Phone, err)
-		// 根據錯誤類型返回更具體的訊息
 		if err.Error() == "member not found" {
 			ErrorResponse(c, http.StatusUnauthorized, "電子郵件或電話不存在", err.Error())
 		} else if err.Error() == "invalid password" {
@@ -146,25 +125,24 @@ func LoginMember(c *gin.Context) {
 		return
 	}
 
-	// 生成 JWT
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"member_id": member.MemberID,
 		"exp":       time.Now().Add(time.Hour * 24).Unix(),
 	})
 
-	tokenString, err := token.SignedString(jwtSecret)
+	tokenString, err := token.SignedString(utils.JWTSecret)
 	if err != nil {
 		log.Printf("Failed to generate token: %v", err)
 		ErrorResponse(c, http.StatusInternalServerError, "無法生成 token", err.Error())
 		return
 	}
 
-	// 記錄登入成功（避免記錄 token）
 	log.Printf("Member logged in successfully: email=%s, member_id=%d", member.Email, member.MemberID)
 
-	// 直接返回 token，匹配前端期望
-	c.JSON(http.StatusOK, gin.H{
-		"token": tokenString,
+	// 修改回應格式以保持一致
+	SuccessResponse(c, http.StatusOK, "登入成功", gin.H{
+		"token":  tokenString,
+		"member": member.ToResponse(),
 	})
 }
 

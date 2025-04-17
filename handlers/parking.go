@@ -171,7 +171,7 @@ func GetAvailableParkingSpots(c *gin.Context) {
 
 	if err := database.DB.
 		Preload("Member").
-		Preload("Rents", "end_time >= ? OR actual_end_time IS NULL", now). // 只載入活躍租賃
+		Preload("Rents", "end_time >= ? OR actual_end_time IS NULL", now).
 		Preload("AvailableDays", "DATE(available_date) = ? AND is_available = ?", dateStr, true).
 		Where("status = ? AND NOT EXISTS (?)", "available", subQuery).
 		Find(&parkingSpots).Error; err != nil {
@@ -184,10 +184,19 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		return
 	}
 
+	// 添加日誌：記錄查詢到的所有車位
+	log.Printf("Queried %d parking spots for date %s:", len(parkingSpots), dateStr)
+	for _, spot := range parkingSpots {
+		log.Printf("Spot %d: Status=%s, AvailableDays=%v", spot.SpotID, spot.Status, spot.AvailableDays)
+	}
+
 	var availableSpots []models.ParkingSpot
 	for _, spot := range parkingSpots {
 		if len(spot.AvailableDays) > 0 {
 			availableSpots = append(availableSpots, spot)
+			log.Printf("Spot %d included in available spots", spot.SpotID)
+		} else {
+			log.Printf("Spot %d excluded: No available days for date %s", spot.SpotID, dateStr)
 		}
 	}
 

@@ -6,11 +6,13 @@ import (
 	"project01/handlers"
 	"project01/utils"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5" // 更新為 jwt/v5
 )
 
+// AuthMiddleware 驗證 JWT token
 // AuthMiddleware 驗證 JWT token
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -20,6 +22,7 @@ func AuthMiddleware() gin.HandlerFunc {
 				"status":  false,
 				"message": "缺少 Authorization 標頭",
 				"error":   "Authorization header is required",
+				"code":    "ERR_NO_AUTH_HEADER",
 			})
 			c.Abort()
 			return
@@ -31,14 +34,13 @@ func AuthMiddleware() gin.HandlerFunc {
 				"status":  false,
 				"message": "無效的 Authorization 格式",
 				"error":   "Authorization header must be in the format 'Bearer <token>'",
+				"code":    "ERR_INVALID_AUTH_FORMAT",
 			})
 			c.Abort()
 			return
 		}
 
 		tokenString := parts[1]
-
-		// 添加日誌以檢查 token
 		log.Printf("Parsing token: %s", tokenString)
 
 		// 明確要求檢查 exp 字段
@@ -49,46 +51,71 @@ func AuthMiddleware() gin.HandlerFunc {
 			return utils.JWTSecret, nil
 		}, jwt.WithExpirationRequired())
 
-		// 添加日誌以檢查錯誤
+		// 添加詳細日誌
 		if err != nil {
 			log.Printf("Token parsing error: %v", err)
+			if claims, ok := token.Claims.(jwt.MapClaims); ok {
+				log.Printf("Token claims: exp=%v, current_time=%v", claims["exp"], time.Now().Unix())
+			}
 			if err == jwt.ErrTokenExpired {
 				c.JSON(http.StatusUnauthorized, gin.H{
 					"status":  false,
 					"message": "token 已過期",
 					"error":   "Token has expired",
+					"code":    "ERR_TOKEN_EXPIRED",
 				})
 			} else {
 				c.JSON(http.StatusUnauthorized, gin.H{
 					"status":  false,
 					"message": "無效的 token",
 					"error":   err.Error(),
+					"code":    "ERR_INVALID_TOKEN",
 				})
 			}
 			c.Abort()
 			return
 		}
 
-		// 添加日誌以檢查 token 是否有效
-		log.Printf("Token is valid: %v", token.Valid)
-
+		// 檢查 Claims 是否有效
 		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+			// 確認 exp 字段存在
+			if exp, ok := claims["exp"].(float64); !ok {
+				log.Printf("Missing or invalid exp in token")
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"status":  false,
+					"message": "無效的 token 內容",
+					"error":   "Missing or invalid exp claim",
+					"code":    "ERR_INVALID_CLAIMS",
+				})
+				c.Abort()
+				return
+			} else {
+				log.Printf("Token verified: exp=%v, current_time=%v", exp, time.Now().Unix())
+			}
+
+			// 確認 member_id 字段
 			memberID, ok := claims["member_id"].(float64)
 			if !ok {
+				log.Printf("Missing or invalid member_id in token")
 				c.JSON(http.StatusUnauthorized, gin.H{
 					"status":  false,
 					"message": "無效的會員 ID",
 					"error":   "Invalid member_id in token",
+					"code":    "ERR_INVALID_MEMBER_ID",
 				})
 				c.Abort()
 				return
 			}
+
+			log.Printf("Token verified for member_id: %d", int(memberID))
 			c.Set("member_id", int(memberID))
 		} else {
+			log.Printf("Invalid token claims or token is not valid")
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"status":  false,
 				"message": "無效的 token 內容",
 				"error":   "Invalid token claims or token is not valid",
+				"code":    "ERR_INVALID_CLAIMS",
 			})
 			c.Abort()
 			return

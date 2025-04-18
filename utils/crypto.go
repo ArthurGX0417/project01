@@ -25,7 +25,7 @@ func InitJWTSecret() {
 		log.Fatal("JWT_SECRET must be at least 32 bytes long")
 	}
 	JWTSecret = []byte(secret)
-	log.Printf("Loaded JWT_SECRET: %s...", secret[:4])
+	log.Printf("JWT_SECRET loaded successfully")
 }
 
 // HashPassword 使用 bcrypt 哈希密碼
@@ -40,7 +40,11 @@ func HashPassword(password string) (string, error) {
 // CheckPasswordHash 驗證密碼是否與哈希匹配
 func CheckPasswordHash(password, hash string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-	return err == nil
+	if err != nil {
+		log.Printf("Password verification failed: %v", err)
+		return false
+	}
+	return true
 }
 
 // getAESKey 動態加載 AES_KEY
@@ -126,5 +130,6 @@ func InitCrypto() error {
 	if len(aesKey) != 32 {
 		return fmt.Errorf("AES_KEY must be 32 bytes long, got %d bytes", len(aesKey))
 	}
+	log.Printf("AES_KEY loaded successfully")
 	return nil
 }

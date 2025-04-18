@@ -16,7 +16,6 @@ import (
 
 // RentInput 定義用於綁定請求的輸入結構體
 type RentInput struct {
-	MemberID  int       `json:"member_id" binding:"required"`
 	SpotID    int       `json:"spot_id" binding:"required"`
 	StartTime time.Time `json:"start_time" binding:"required"`
 	EndTime   time.Time `json:"end_time" binding:"required"`
@@ -30,7 +29,8 @@ func RentParkingSpot(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無效的輸入資料",
-			"error":   err.Error(),
+			"error":   "請提供車位 ID、開始時間和結束時間",
+			"code":    "ERR_INVALID_INPUT",
 		})
 		return
 	}
@@ -42,6 +42,7 @@ func RentParkingSpot(c *gin.Context) {
 			"status":  false,
 			"message": "未授權",
 			"error":   "member_id not found in token",
+			"code":    "ERR_NO_MEMBER_ID",
 		})
 		return
 	}
@@ -53,16 +54,7 @@ func RentParkingSpot(c *gin.Context) {
 			"status":  false,
 			"message": "未授權",
 			"error":   "invalid member_id type",
-		})
-		return
-	}
-
-	if currentMemberIDInt != input.MemberID {
-		log.Printf("Member %d attempted to rent parking spot for member %d", currentMemberIDInt, input.MemberID)
-		c.JSON(http.StatusForbidden, gin.H{
-			"status":  false,
-			"message": "無權限",
-			"error":   "you can only rent parking spots for yourself",
+			"code":    "ERR_INVALID_MEMBER_ID",
 		})
 		return
 	}
@@ -71,6 +63,8 @@ func RentParkingSpot(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "開始時間必須在未來",
+			"error":   "start_time must be in the future",
+			"code":    "ERR_INVALID_TIME",
 		})
 		return
 	}
@@ -79,17 +73,20 @@ func RentParkingSpot(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "結束時間必須晚於開始時間",
+			"error":   "end_time must be after start_time",
+			"code":    "ERR_INVALID_TIME",
 		})
 		return
 	}
 
-	wifiVerified, err := services.VerifyWifi(input.MemberID)
+	wifiVerified, err := services.VerifyWifi(currentMemberIDInt)
 	if err != nil {
-		log.Printf("Failed to verify WiFi for member %d: %v", input.MemberID, err)
+		log.Printf("Failed to verify WiFi for member %d: %v", currentMemberIDInt, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
 			"message": "WiFi 驗證失敗",
 			"error":   err.Error(),
+			"code":    "ERR_WIFI_VERIFICATION",
 		})
 		return
 	}
@@ -97,6 +94,8 @@ func RentParkingSpot(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"status":  false,
 			"message": "請通過 WiFi 驗證以使用服務",
+			"error":   "WiFi verification required",
+			"code":    "ERR_WIFI_NOT_VERIFIED",
 		})
 		return
 	}
@@ -108,6 +107,7 @@ func RentParkingSpot(c *gin.Context) {
 			"status":  false,
 			"message": "車位不存在",
 			"error":   "parking spot not found",
+			"code":    "ERR_NOT_FOUND",
 		})
 		return
 	}
@@ -118,6 +118,7 @@ func RentParkingSpot(c *gin.Context) {
 			"status":  false,
 			"message": "車位不可用",
 			"error":   "parking spot is not available",
+			"code":    "ERR_SPOT_NOT_AVAILABLE",
 		})
 		return
 	}
@@ -129,6 +130,7 @@ func RentParkingSpot(c *gin.Context) {
 				"status":  false,
 				"message": "車位已被租用",
 				"error":   "parking spot has an active rent",
+				"code":    "ERR_SPOT_ACTIVE_RENT",
 			})
 			return
 		}
@@ -139,6 +141,7 @@ func RentParkingSpot(c *gin.Context) {
 				"status":  false,
 				"message": "車位在指定時間範圍內不可用",
 				"error":   "parking spot is not available for the specified time range",
+				"code":    "ERR_TIME_OVERLAP",
 			})
 			return
 		}
@@ -154,12 +157,13 @@ func RentParkingSpot(c *gin.Context) {
 			"status":  false,
 			"message": "車位在指定日期不可用",
 			"error":   "parking spot is not available on the specified date",
+			"code":    "ERR_DATE_NOT_AVAILABLE",
 		})
 		return
 	}
 
 	rent := &models.Rent{
-		MemberID:  input.MemberID,
+		MemberID:  currentMemberIDInt,
 		SpotID:    input.SpotID,
 		StartTime: input.StartTime,
 		EndTime:   input.EndTime,
@@ -171,17 +175,19 @@ func RentParkingSpot(c *gin.Context) {
 			"status":  false,
 			"message": "租用車位失敗",
 			"error":   err.Error(),
+			"code":    "ERR_RENT_FAILED",
 		})
 		return
 	}
 
-	parkingSpot.Status = "reserved" // 設置為 reserved，因為有未結束的租賃
+	parkingSpot.Status = "reserved"
 	if err := database.DB.Save(&parkingSpot).Error; err != nil {
 		log.Printf("Failed to update parking spot status for spot %d: %v", parkingSpot.SpotID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
 			"message": "更新車位狀態失敗",
 			"error":   err.Error(),
+			"code":    "ERR_UPDATE_STATUS",
 		})
 		return
 	}
@@ -192,6 +198,7 @@ func RentParkingSpot(c *gin.Context) {
 			"status":  false,
 			"message": "載入租用資料失敗",
 			"error":   err.Error(),
+			"code":    "ERR_PRELOAD_FAILED",
 		})
 		return
 	}

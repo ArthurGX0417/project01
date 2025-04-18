@@ -59,11 +59,9 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	// 添加日誌，記錄當前時間和輸入時間
 	now := time.Now().UTC()
 	log.Printf("Current UTC time: %s, StartTime: %s", now.Format(time.RFC3339), input.StartTime.Format(time.RFC3339))
 
-	// 修改時間檢查，允許當天的 start_time
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	if input.StartTime.Before(today) {
 		log.Printf("Start time %s is before today %s", input.StartTime.Format(time.RFC3339), today.Format(time.RFC3339))
@@ -131,9 +129,10 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
+	// 改進檢查邏輯，僅將未結束且 end_time 未過期的租賃視為活躍
 	for _, rent := range parkingSpot.Rents {
-		if rent.ActualEndTime == nil {
-			log.Printf("Parking spot %d has an active rent", input.SpotID)
+		if rent.ActualEndTime == nil && rent.EndTime.After(now) {
+			log.Printf("Parking spot %d has an active rent: rent_id %d, end_time %s", input.SpotID, rent.RentID, rent.EndTime.Format(time.RFC3339))
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  false,
 				"message": "車位已被租用",
@@ -142,9 +141,10 @@ func RentParkingSpot(c *gin.Context) {
 			})
 			return
 		}
+		// 檢查時間重疊（包括已結束的租賃）
 		if (input.StartTime.Before(rent.EndTime) || input.StartTime.Equal(rent.EndTime)) &&
 			(input.EndTime.After(rent.StartTime) || input.EndTime.Equal(rent.StartTime)) {
-			log.Printf("New rent time range overlaps with existing rent for spot %d", input.SpotID)
+			log.Printf("New rent time range overlaps with existing rent for spot %d: rent_id %d", input.SpotID, rent.RentID)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  false,
 				"message": "車位在指定時間範圍內不可用",

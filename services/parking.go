@@ -159,7 +159,7 @@ func GetParkingSpotByID(id int) (*models.ParkingSpot, []models.ParkingSpotAvaila
 	var spot models.ParkingSpot
 	if err := database.DB.
 		Preload("Member").
-		Preload("Rents"). // 修正為 "Rents"
+		Preload("Rents"). // 應載入所有 Rents
 		First(&spot, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("Parking spot with ID %d not found", id)

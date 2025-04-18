@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"project01/handlers"
@@ -12,7 +13,6 @@ import (
 	"github.com/golang-jwt/jwt/v5" // 更新為 jwt/v5
 )
 
-// AuthMiddleware 驗證 JWT token
 // AuthMiddleware 驗證 JWT token
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -57,7 +57,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			if claims, ok := token.Claims.(jwt.MapClaims); ok {
 				log.Printf("Token claims: exp=%v, current_time=%v", claims["exp"], time.Now().Unix())
 			}
-			if err == jwt.ErrTokenExpired {
+			if errors.Is(err, jwt.ErrTokenExpired) { // 使用 errors.Is 確保正確匹配
 				c.JSON(http.StatusUnauthorized, gin.H{
 					"status":  false,
 					"message": "token 已過期",

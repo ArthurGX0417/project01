@@ -59,17 +59,25 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	if input.StartTime.Before(time.Now().UTC()) {
+	// 添加日誌，記錄當前時間和輸入時間
+	now := time.Now().UTC()
+	log.Printf("Current UTC time: %s, StartTime: %s", now.Format(time.RFC3339), input.StartTime.Format(time.RFC3339))
+
+	// 修改時間檢查，允許當天的 start_time
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	if input.StartTime.Before(today) {
+		log.Printf("Start time %s is before today %s", input.StartTime.Format(time.RFC3339), today.Format(time.RFC3339))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
-			"message": "開始時間必須在未來",
-			"error":   "start_time must be in the future",
+			"message": "開始時間必須在今天或未來",
+			"error":   "start_time must be today or in the future",
 			"code":    "ERR_INVALID_TIME",
 		})
 		return
 	}
 
 	if !input.EndTime.After(input.StartTime) {
+		log.Printf("End time %s is not after start time %s", input.EndTime.Format(time.RFC3339), input.StartTime.Format(time.RFC3339))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "結束時間必須晚於開始時間",

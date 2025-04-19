@@ -19,7 +19,7 @@ type ParkingSpot struct {
 	Longitude        float64                   `json:"longitude" gorm:"type:decimal(9,6);default:0.0" binding:"gte=-180,lte=180"`
 	Latitude         float64                   `json:"latitude" gorm:"type:decimal(9,6);default:0.0" binding:"gte=-90,lte=90"`
 	Member           Member                    `json:"-" gorm:"foreignKey:MemberID;references:MemberID"`
-	Rents            []Rent                    `json:"-" gorm:"foreignKey:spot_id;references:SpotID"`
+	Rents            []Rent                    `gorm:"foreignKey:SpotID;references:SpotID"` // 修正外鍵
 	AvailableDays    []ParkingSpotAvailableDay `json:"-" gorm:"foreignKey:SpotID;references:SpotID"`
 }
 
@@ -41,7 +41,7 @@ type ParkingSpotResponse struct {
 	Latitude         float64                `json:"latitude"`
 	AvailableDays    []AvailableDayResponse `json:"available_days"`
 	Member           MemberResponse         `json:"member"`
-	Rents            []SimpleRentResponse   `json:"rents"` // 使用 SimpleRentResponse
+	Rents            []SimpleRentResponse   `json:"rents"`
 }
 
 func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay) ParkingSpotResponse {

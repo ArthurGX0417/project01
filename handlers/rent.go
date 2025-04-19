@@ -118,20 +118,11 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	if parkingSpot.Status != "available" {
-		log.Printf("Parking spot %d is not available", input.SpotID)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  false,
-			"message": "車位不可用",
-			"error":   "parking spot is not available",
-			"code":    "ERR_SPOT_NOT_AVAILABLE",
-		})
-		return
-	}
-
-	// 改進檢查邏輯，僅將未結束且 end_time 未過期的租賃視為活躍
+	// 檢查是否有活躍租賃，並自動更新車位狀態
+	hasActiveRent := false
 	for _, rent := range parkingSpot.Rents {
 		if rent.ActualEndTime == nil && rent.EndTime.After(now) {
+			hasActiveRent = true
 			log.Printf("Parking spot %d has an active rent: rent_id %d, end_time %s", input.SpotID, rent.RentID, rent.EndTime.Format(time.RFC3339))
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  false,
@@ -155,8 +146,49 @@ func RentParkingSpot(c *gin.Context) {
 		}
 	}
 
-	var availableDay models.ParkingSpotAvailableDay
+	// 自動更新車位狀態
+	var isDayAvailable bool
 	startDate := input.StartTime.Format("2006-01-02")
+	var availableDayCount int64
+	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}).
+		Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", input.SpotID, startDate, true).
+		Count(&availableDayCount).Error; err != nil {
+		log.Printf("Failed to check available days for spot %d: %v", input.SpotID, err)
+	}
+	isDayAvailable = availableDayCount > 0
+
+	if !hasActiveRent {
+		if isDayAvailable && parkingSpot.Status != "available" {
+			log.Printf("Resetting parking spot %d status to available", input.SpotID)
+			parkingSpot.Status = "available"
+		} else if !isDayAvailable && parkingSpot.Status != "occupied" {
+			log.Printf("Resetting parking spot %d status to occupied", input.SpotID)
+			parkingSpot.Status = "occupied"
+		}
+		if err := database.DB.Save(&parkingSpot).Error; err != nil {
+			log.Printf("Failed to update parking spot status for spot %d: %v", input.SpotID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  false,
+				"message": "更新車位狀態失敗",
+				"error":   err.Error(),
+				"code":    "ERR_UPDATE_STATUS",
+			})
+			return
+		}
+	}
+
+	if parkingSpot.Status != "available" {
+		log.Printf("Parking spot %d is not available", input.SpotID)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "車位不可用",
+			"error":   "parking spot is not available",
+			"code":    "ERR_SPOT_NOT_AVAILABLE",
+		})
+		return
+	}
+
+	var availableDay models.ParkingSpotAvailableDay
 	if err := database.DB.
 		Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", input.SpotID, startDate, true).
 		First(&availableDay).Error; err != nil {

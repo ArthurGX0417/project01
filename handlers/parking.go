@@ -161,20 +161,39 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		return
 	}
 
-	var parkingSpots []models.ParkingSpot
 	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
 	endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Nanosecond)
 
-	subQuery := database.DB.Model(&models.Rent{}).
+	// 先查詢有活躍租賃的 spot_id
+	var rentedSpotIDs []int
+	if err := database.DB.Model(&models.Rent{}).
 		Select("spot_id").
-		Where("(actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)", now, startOfDay, endOfDay)
+		Where("(actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)", now, startOfDay, endOfDay).
+		Distinct().
+		Scan(&rentedSpotIDs).Error; err != nil {
+		log.Printf("Failed to query rented spot IDs: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "查詢失敗",
+			"error":   "failed to query rented spot IDs: database error",
+		})
+		return
+	}
+	log.Printf("Rented spot IDs: %v", rentedSpotIDs)
 
-	if err := database.DB.
+	// 查詢可用車位，排除有活躍租賃的 spot_id
+	var parkingSpots []models.ParkingSpot
+	query := database.DB.
 		Preload("Member").
 		Preload("Rents", "end_time >= ? OR actual_end_time IS NULL", now).
 		Preload("AvailableDays", "DATE(available_date) = ? AND is_available = ?", dateStr, true).
-		Where("status = ? AND NOT EXISTS (?)", "available", subQuery).
-		Find(&parkingSpots).Error; err != nil {
+		Where("status = ?", "available")
+
+	if len(rentedSpotIDs) > 0 {
+		query = query.Where("spot_id NOT IN (?)", rentedSpotIDs)
+	}
+
+	if err := query.Find(&parkingSpots).Error; err != nil {
 		log.Printf("Failed to get parking spots: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
@@ -191,16 +210,31 @@ func GetAvailableParkingSpots(c *gin.Context) {
 	}
 
 	var availableSpots []models.ParkingSpot
+	unavailableSpots := []int{}
 	for _, spot := range parkingSpots {
 		if len(spot.AvailableDays) > 0 {
 			availableSpots = append(availableSpots, spot)
 			log.Printf("Spot %d included in available spots", spot.SpotID)
 		} else {
+			unavailableSpots = append(unavailableSpots, spot.SpotID)
 			log.Printf("Spot %d excluded: No available days for date %s", spot.SpotID, dateStr)
 		}
 	}
 
 	log.Printf("Found %d parking spots, %d available after filtering for date %s", len(parkingSpots), len(availableSpots), dateStr)
+
+	if len(availableSpots) == 0 {
+		message := fmt.Sprintf("所選條件（日期：%s）目前沒有符合的車位！請調整篩選條件。", dateStr)
+		if len(unavailableSpots) > 0 {
+			message += fmt.Sprintf(" 以下車位未設定可用日期：%v", unavailableSpots)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"status":  false,
+			"message": message,
+			"data":    []models.ParkingSpot{},
+		})
+		return
+	}
 
 	availableSpotsResponse := make([]models.ParkingSpotResponse, len(availableSpots))
 	for i, spot := range availableSpots {

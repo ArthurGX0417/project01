@@ -107,8 +107,8 @@ func GetAvailableParkingSpots(location, date string) ([]models.ParkingSpot, [][]
 		query = query.Where("pad.available_date = ?", time.Now().Format("2006-01-02"))
 	}
 
-	// 確保停車位狀態為 idle
-	query = query.Where("parking_spot.status = ?", "idle")
+	// 確保停車位狀態為 available
+	query = query.Where("parking_spot.status = ?", "available")
 
 	// 執行查詢
 	err := query.Find(&spots).Error

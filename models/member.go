@@ -9,7 +9,7 @@ type Member struct {
 	Name               string        `json:"name" gorm:"type:varchar(50);not null" binding:"required,max=50"`
 	Phone              string        `json:"phone" gorm:"type:varchar(20);not null" binding:"required,max=20"`
 	Password           string        `json:"password" gorm:"type:varchar(100);not null" binding:"required,min=8,max=100"`
-	Role               string        `json:"role" gorm:"type:enum('shared_owner', 'renter');not null" binding:"required,oneof=shared_owner renter"`
+	Role               string        `json:"role" gorm:"type:enum('shared_owner', 'renter', 'admin');not null" binding:"required,oneof=shared_owner renter admin"`
 	PaymentMethod      string        `json:"payment_method" gorm:"type:enum('credit_card', 'e_wallet');not null" binding:"required,oneof=credit_card e_wallet"`
 	PaymentInfo        string        `json:"payment_info" gorm:"type:varchar(100)" binding:"omitempty,max=100"`
 	AutoMonthlyPayment bool          `json:"auto_monthly_payment" gorm:"type:tinyint(1);default:0"`
@@ -55,8 +55,8 @@ func (m *Member) ToResponse() MemberResponse {
 func (m *Member) ToResponseWithSpots(spots []ParkingSpot) MemberResponse {
 	spotsResponse := make([]ParkingSpotResponse, len(spots))
 	for i, spot := range spots {
-		// 直接傳遞 spot.AvailableDays，無需創建新的切片
-		spotsResponse[i] = spot.ToResponse(spot.AvailableDays)
+		// 傳遞 spot.AvailableDays 和 spot.Rents
+		spotsResponse[i] = spot.ToResponse(spot.AvailableDays, spot.Rents)
 	}
 
 	return MemberResponse{

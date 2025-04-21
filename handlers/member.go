@@ -42,7 +42,7 @@ func RegisterMember(c *gin.Context) {
 		return
 	}
 
-	// 驗證密碼（例如，最少 8 個字元，至少一個字母和一個數字）
+	// 驗證密碼
 	if len(member.Password) < 8 || !regexp.MustCompile(`[a-zA-Z]`).MatchString(member.Password) || !regexp.MustCompile(`[0-9]`).MatchString(member.Password) {
 		ErrorResponse(c, http.StatusBadRequest, "密碼必須至少8個字符，包含字母和數字", "invalid password format")
 		return
@@ -55,6 +55,15 @@ func RegisterMember(c *gin.Context) {
 
 	if member.PaymentInfo == "" {
 		ErrorResponse(c, http.StatusBadRequest, "請提供 payment_info", "payment_info is required")
+		return
+	}
+
+	// 驗證並設置 role（不允許註冊為 admin）
+	if member.Role != "shared_owner" && member.Role != "renter" {
+		member.Role = "renter" // 預設為 renter
+	}
+	if member.Role == "admin" {
+		ErrorResponse(c, http.StatusBadRequest, "不允許註冊為管理員", "admin role is not allowed for registration")
 		return
 	}
 
@@ -127,6 +136,7 @@ func LoginMember(c *gin.Context) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"member_id": member.MemberID,
+		"role":      member.Role, // 加入 role
 		"exp":       time.Now().Add(time.Hour * 24).Unix(),
 	})
 
@@ -137,9 +147,8 @@ func LoginMember(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Member logged in successfully: email=%s, member_id=%d", member.Email, member.MemberID)
+	log.Printf("Member logged in successfully: email=%s, member_id=%d, role=%s", member.Email, member.MemberID, member.Role)
 
-	// 修改回應格式以保持一致
 	SuccessResponse(c, http.StatusOK, "登入成功", gin.H{
 		"token":  tokenString,
 		"member": member.ToResponse(),
@@ -268,12 +277,13 @@ func GetMemberHistory(c *gin.Context) {
 		return
 	}
 
-	// 一次查詢即可取得所有停車位的所有可用天數
+	// 收集所有相關的 spot_id
 	spotIDs := make([]int, len(rents))
 	for i, rent := range rents {
 		spotIDs[i] = rent.SpotID
 	}
 
+	// 查詢所有停車位的可用天數
 	var availableDaysRecords []models.ParkingSpotAvailableDay
 	availableDaysMap := make(map[int][]models.ParkingSpotAvailableDay)
 	if len(spotIDs) > 0 {
@@ -286,13 +296,31 @@ func GetMemberHistory(c *gin.Context) {
 		}
 	}
 
+	// 查詢所有停車位的租賃記錄
+	var parkingSpotRents []models.Rent
+	parkingSpotRentsMap := make(map[int][]models.Rent)
+	if len(spotIDs) > 0 {
+		if err := database.DB.Where("spot_id IN ?", spotIDs).Find(&parkingSpotRents).Error; err != nil {
+			log.Printf("Failed to fetch rents for spots: %v", err)
+			parkingSpotRents = []models.Rent{}
+		}
+		for _, rent := range parkingSpotRents {
+			parkingSpotRentsMap[rent.SpotID] = append(parkingSpotRentsMap[rent.SpotID], rent)
+		}
+	}
+
+	// 轉換為 RentResponse
 	rentResponses := make([]models.RentResponse, len(rents))
 	for i, rent := range rents {
 		availableDays := availableDaysMap[rent.SpotID]
 		if availableDays == nil {
 			availableDays = []models.ParkingSpotAvailableDay{}
 		}
-		rentResponses[i] = rent.ToResponse(availableDays)
+		spotRents := parkingSpotRentsMap[rent.SpotID]
+		if spotRents == nil {
+			spotRents = []models.Rent{}
+		}
+		rentResponses[i] = rent.ToResponse(availableDays, spotRents)
 	}
 
 	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)

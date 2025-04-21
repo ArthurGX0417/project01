@@ -249,37 +249,46 @@ func RentParkingSpot(c *gin.Context) {
 		availableDays = []models.ParkingSpotAvailableDay{}
 	}
 
+	var parkingSpotRents []models.Rent
+	if err := database.DB.Where("spot_id = ?", rent.SpotID).Find(&parkingSpotRents).Error; err != nil {
+		log.Printf("Failed to fetch rents for spot %d: %v", rent.SpotID, err)
+		parkingSpotRents = []models.Rent{}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":  true,
 		"message": "車位租用成功",
-		"data":    rent.ToResponse(availableDays),
+		"data":    rent.ToResponse(availableDays, parkingSpotRents),
 	})
 }
 
 // GetRentRecords 查詢租用紀錄資料檢查
 func GetRentRecords(c *gin.Context) {
-	rents, err := services.GetRentRecords()
-	if err != nil {
-		log.Printf("Failed to get rent records: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  false,
-			"message": "查詢租用紀錄失敗",
-			"error":   err.Error(),
-		})
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token")
 		return
 	}
 
-	// 使用 SimpleRentResponse 減少回應大小
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type")
+		return
+	}
+
+	var rents []models.Rent
+	if err := database.DB.Where("member_id = ?", currentMemberIDInt).Find(&rents).Error; err != nil {
+		log.Printf("Failed to get rent records: %v", err)
+		ErrorResponse(c, http.StatusInternalServerError, "查詢租用紀錄失敗", err.Error())
+		return
+	}
+
 	rentResponses := make([]models.SimpleRentResponse, len(rents))
 	for i, rent := range rents {
 		rentResponses[i] = rent.ToSimpleResponse()
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"status":  true,
-		"message": "查詢成功",
-		"data":    rentResponses,
-	})
+	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)
 }
 
 // CancelRent 取消租用資料檢查
@@ -329,9 +338,9 @@ func CancelRent(c *gin.Context) {
 
 	// 檢查是否有其他未結束的租賃
 	var activeRentCount int64
-	if err := database.DB.Model(&models.Rent{}). // 使用 models.Rent
-							Where("spot_id = ? AND actual_end_time IS NULL AND end_time >= ?", rent.SpotID, time.Now()).
-							Count(&activeRentCount).Error; err != nil {
+	if err := database.DB.Model(&models.Rent{}).
+		Where("spot_id = ? AND actual_end_time IS NULL AND end_time >= ?", rent.SpotID, time.Now()).
+		Count(&activeRentCount).Error; err != nil {
 		log.Printf("Failed to check active rents for spot %d: %v", rent.SpotID, err)
 		activeRentCount = 0
 	}
@@ -340,9 +349,9 @@ func CancelRent(c *gin.Context) {
 	var isDayAvailable bool
 	todayStr := time.Now().Format("2006-01-02")
 	var availableDayCount int64
-	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}). // 使用 models.ParkingSpotAvailableDay
-									Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", rent.SpotID, todayStr, true).
-									Count(&availableDayCount).Error; err != nil {
+	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}).
+		Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", rent.SpotID, todayStr, true).
+		Count(&availableDayCount).Error; err != nil {
 		log.Printf("Failed to check available days for spot %d: %v", rent.SpotID, err)
 	}
 	isDayAvailable = availableDayCount > 0
@@ -387,7 +396,7 @@ func LeaveAndPay(c *gin.Context) {
 	}
 
 	var rent models.Rent
-	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").Preload("ParkingSpot.Rents").First(&rent, id).Error; err != nil {
+	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").First(&rent, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status":  false,
@@ -449,21 +458,30 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
+	// 計算費用
 	var totalCost float64
-	durationHours := leaveTime.Sub(rent.StartTime).Hours()
-	durationDays := durationHours / 24
+	durationMinutes := leaveTime.Sub(rent.StartTime).Minutes()
+	durationDays := durationMinutes / (24 * 60)
 
-	if rent.ParkingSpot.PricingType == "monthly" {
-		const monthlyRate = 5000.0
-		months := math.Ceil(durationDays / 30)
-		totalCost = months * monthlyRate
+	// 檢查是否在 5 分鐘內，若是則免費
+	if durationMinutes <= 5 {
+		totalCost = 0
 	} else {
-		halfHours := math.Ceil(durationHours * 2)
-		totalCost = halfHours * float64(rent.ParkingSpot.PricePerHalfHour)
-		dailyMax := float64(rent.ParkingSpot.DailyMaxPrice)
-		days := math.Ceil(durationDays)
-		maxCost := dailyMax * days
-		totalCost = math.Min(totalCost, maxCost)
+		if rent.ParkingSpot.PricingType == "monthly" {
+			months := math.Ceil(durationDays / 30)
+			totalCost = months * rent.ParkingSpot.MonthlyPrice
+		} else { // hourly
+			halfHours := math.Floor(durationMinutes / 30)
+			remainingMinutes := durationMinutes - (halfHours * 30)
+			if remainingMinutes > 5 { // 超過 5 分鐘才計入下一個半小時
+				halfHours++
+			}
+			totalCost = halfHours * rent.ParkingSpot.PricePerHalfHour
+			dailyMax := rent.ParkingSpot.DailyMaxPrice
+			days := math.Ceil(durationDays)
+			maxCost := dailyMax * days
+			totalCost = math.Min(totalCost, maxCost)
+		}
 	}
 
 	rent.ActualEndTime = &leaveTime
@@ -479,27 +497,24 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 檢查是否有其他未結束的租賃
 	var activeRentCount int64
-	if err := database.DB.Model(&models.Rent{}). // 使用 models.Rent
-							Where("spot_id = ? AND actual_end_time IS NULL AND end_time >= ?", rent.SpotID, time.Now()).
-							Count(&activeRentCount).Error; err != nil {
+	if err := database.DB.Model(&models.Rent{}).
+		Where("spot_id = ? AND actual_end_time IS NULL AND end_time >= ?", rent.SpotID, time.Now()).
+		Count(&activeRentCount).Error; err != nil {
 		log.Printf("Failed to check active rents for spot %d: %v", rent.SpotID, err)
 		activeRentCount = 0
 	}
 
-	// 檢查當天的可用性
 	var isDayAvailable bool
 	todayStr := time.Now().Format("2006-01-02")
 	var availableDayCount int64
-	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}). // 使用 models.ParkingSpotAvailableDay
-									Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", rent.SpotID, todayStr, true).
-									Count(&availableDayCount).Error; err != nil {
+	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}).
+		Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", rent.SpotID, todayStr, true).
+		Count(&availableDayCount).Error; err != nil {
 		log.Printf("Failed to check available days for spot %d: %v", rent.SpotID, err)
 	}
 	isDayAvailable = availableDayCount > 0
 
-	// 更新車位狀態
 	if activeRentCount > 0 {
 		rent.ParkingSpot.Status = "reserved"
 	} else if isDayAvailable {
@@ -524,7 +539,13 @@ func LeaveAndPay(c *gin.Context) {
 		availableDays = []models.ParkingSpotAvailableDay{}
 	}
 
-	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").Preload("ParkingSpot.Rents").First(&rent, id).Error; err != nil {
+	var parkingSpotRents []models.Rent
+	if err := database.DB.Where("spot_id = ?", rent.SpotID).Find(&parkingSpotRents).Error; err != nil {
+		log.Printf("Failed to fetch rents for spot %d: %v", rent.SpotID, err)
+		parkingSpotRents = []models.Rent{}
+	}
+
+	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").First(&rent, id).Error; err != nil {
 		log.Printf("Failed to reload rent data: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
@@ -537,7 +558,7 @@ func LeaveAndPay(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  true,
 		"message": "離開結算成功",
-		"data":    rent.ToResponse(availableDays),
+		"data":    rent.ToResponse(availableDays, parkingSpotRents),
 	})
 }
 
@@ -547,35 +568,40 @@ func GetRentByID(c *gin.Context) {
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		log.Printf("Invalid rent ID: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  false,
-			"message": "無效的租用ID",
-			"error":   err.Error(),
-		})
+		ErrorResponse(c, http.StatusBadRequest, "無效的租用ID", err.Error())
 		return
 	}
 
-	rent, availableDays, err := services.GetRentByID(id)
-	if err != nil {
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token")
+		return
+	}
+
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type")
+		return
+	}
+
+	var rent models.Rent
+	if err := database.DB.Where("rent_id = ? AND member_id = ?", id, currentMemberIDInt).First(&rent).Error; err != nil {
 		log.Printf("Failed to get rent: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  false,
-			"message": "查詢租賃記錄失敗",
-			"error":   err.Error(),
-		})
-		return
-	}
-	if rent == nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"status":  false,
-			"message": "租賃記錄不存在",
-		})
+		ErrorResponse(c, http.StatusNotFound, "租賃記錄不存在", "rent record not found")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"status":  true,
-		"message": "查詢成功",
-		"data":    rent.ToResponse(availableDays),
-	})
+	availableDays, err := services.FetchAvailableDays(rent.SpotID)
+	if err != nil {
+		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
+		availableDays = []models.ParkingSpotAvailableDay{}
+	}
+
+	var parkingSpotRents []models.Rent
+	if err := database.DB.Where("spot_id = ?", rent.SpotID).Find(&parkingSpotRents).Error; err != nil {
+		log.Printf("Failed to fetch rents for spot %d: %v", rent.SpotID, err)
+		parkingSpotRents = []models.Rent{}
+	}
+
+	SuccessResponse(c, http.StatusOK, "查詢成功", rent.ToResponse(availableDays, parkingSpotRents))
 }

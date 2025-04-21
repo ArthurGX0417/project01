@@ -4,6 +4,7 @@ import (
 	"fmt" // Add this import for fmt.Sprintf
 	"log"
 	"os"
+	"project01/models"
 	"time"
 
 	"gorm.io/driver/mysql"
@@ -81,6 +82,14 @@ func InitDB() {
 		log.Fatalf("Failed to get current database: %v", err)
 	}
 	log.Printf("Connected to database: %s", dbName)
+
+	// 添加自動遷移
+	err = DB.AutoMigrate(
+		&models.Member{},
+		&models.ParkingSpot{},
+		&models.ParkingSpotAvailableDay{},
+		&models.Rent{},
+	)
 
 	log.Println("Database initialized successfully with GORM")
 }

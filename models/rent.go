@@ -42,7 +42,7 @@ type SimpleRentResponse struct {
 	TotalCost     float64    `json:"total_cost"`
 }
 
-func (r *Rent) ToResponse(availableDays []ParkingSpotAvailableDay) RentResponse {
+func (r *Rent) ToResponse(availableDays []ParkingSpotAvailableDay, parkingSpotRents []Rent) RentResponse {
 	return RentResponse{
 		RentID:        r.RentID,
 		MemberID:      r.MemberID,
@@ -52,7 +52,7 @@ func (r *Rent) ToResponse(availableDays []ParkingSpotAvailableDay) RentResponse 
 		ActualEndTime: r.ActualEndTime,
 		TotalCost:     r.TotalCost,
 		Member:        r.Member.ToResponse(),
-		ParkingSpot:   r.ParkingSpot.ToResponse(availableDays),
+		ParkingSpot:   r.ParkingSpot.ToResponse(availableDays, parkingSpotRents),
 	}
 }
 

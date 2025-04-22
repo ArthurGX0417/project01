@@ -23,17 +23,46 @@ func FetchAvailableDays(spotID int) ([]models.ParkingSpotAvailableDay, error) {
 
 // ShareParkingSpot 共享停車位
 func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSpotAvailableDay) error {
+	// 驗證 parking_type
 	if spot.ParkingType != "mechanical" && spot.ParkingType != "flat" {
 		return fmt.Errorf("invalid parking_type: must be 'mechanical' or 'flat'")
 	}
+
+	// 驗證 pricing_type
 	if spot.PricingType != "monthly" && spot.PricingType != "hourly" {
 		return fmt.Errorf("invalid pricing_type: must be 'monthly' or 'hourly'")
 	}
+
+	// 驗證 status
 	if spot.Status != "available" && spot.Status != "occupied" && spot.Status != "reserved" {
 		return fmt.Errorf("invalid status: must be 'available', 'occupied', or 'reserved'")
 	}
 
-	// 檢查日期重複性（AvailableDate 現在是 time.Time）
+	// 驗證經緯度
+	if spot.Latitude == 0 && spot.Longitude == 0 {
+		return fmt.Errorf("invalid latitude and longitude: both cannot be 0")
+	}
+	if spot.Latitude < -90 || spot.Latitude > 90 {
+		return fmt.Errorf("invalid latitude: must be between -90 and 90")
+	}
+	if spot.Longitude < -180 || spot.Longitude > 180 {
+		return fmt.Errorf("invalid longitude: must be between -180 and 180")
+	}
+
+	// 設置價格預設值
+	if spot.PricePerHalfHour == 0 && spot.PricingType == "hourly" {
+		spot.PricePerHalfHour = 20.00
+	}
+	if spot.DailyMaxPrice == 0 && spot.PricingType == "hourly" {
+		spot.DailyMaxPrice = 300.00
+	}
+	if spot.MonthlyPrice == 0 && spot.PricingType == "monthly" {
+		spot.MonthlyPrice = 5000.00
+	}
+
+	// 檢查日期重複性和有效性
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	seenDates := make(map[string]bool)
 	for _, day := range availableDays {
 		// 將 time.Time 格式化為 YYYY-MM-DD 進行重複檢查
@@ -42,8 +71,14 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 			return fmt.Errorf("duplicate date in available_days: %s", dateStr)
 		}
 		seenDates[dateStr] = true
+
+		// 確保日期是今天或未來的日期
+		if day.AvailableDate.Before(today) {
+			return fmt.Errorf("available date must be today or in the future: %s", dateStr)
+		}
 	}
 
+	// 驗證會員
 	var member models.Member
 	if err := database.DB.Where("member_id = ?", spot.MemberID).First(&member).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -57,8 +92,10 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 		return fmt.Errorf("only shared_owner can share parking spots")
 	}
 
+	// 開始事務
 	tx := database.DB.Begin()
 
+	// 創建停車位
 	if err := tx.Create(spot).Error; err != nil {
 		tx.Rollback()
 		log.Printf("Failed to share parking spot: %v", err)
@@ -77,6 +114,7 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 		}
 	}
 
+	// 提交事務
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
@@ -85,22 +123,60 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 	return nil
 }
 
-// GetAvailableParkingSpots 查詢可用停車位
-func GetAvailableParkingSpots(location, date string) ([]models.ParkingSpot, [][]models.ParkingSpotAvailableDay, error) {
+// GetAvailableParkingSpots 查詢可用停車位，基於日期和經緯度
+func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) ([]models.ParkingSpot, [][]models.ParkingSpotAvailableDay, error) {
 	var spots []models.ParkingSpot
+
+	// 驗證 radius 參數
+	if radius <= 0 {
+		radius = 3.0 // 預設值為 3 公里
+	}
+	if radius > 50 {
+		radius = 50.0 // 最大值為 50 公里
+	}
+
+	// Haversine 公式計算距離（單位：公里）
+	distanceSQL := `
+        6371 * acos(
+            cos(radians(?)) * cos(radians(parking_spot.latitude)) * 
+            cos(radians(parking_spot.longitude) - radians(?)) + 
+            sin(radians(?)) * sin(radians(parking_spot.latitude))
+        )
+    `
+
+	// 計算日期範圍
+	now := time.Now().UTC()
+	parsedDate, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid date format: %w", err)
+	}
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	if parsedDate.Before(today) {
+		return nil, nil, fmt.Errorf("date must be today or in the future: %s", date)
+	}
+
+	startOfDay := time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, time.UTC)
+	endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Nanosecond)
+
+	// 查詢當前正在被租用的車位
+	var rentedSpotIDs []int
+	if err := database.DB.Model(&models.Rent{}).
+		Select("spot_id").
+		Where("(actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)", now, startOfDay, endOfDay).
+		Distinct().
+		Scan(&rentedSpotIDs).Error; err != nil {
+		log.Printf("Failed to query rented spot IDs: %v", err)
+		return nil, nil, fmt.Errorf("failed to query rented spot IDs: %w", err)
+	}
 
 	// 構建查詢
 	query := database.DB.
+		Preload("Member").
+		Preload("Rents", "end_time >= ? OR actual_end_time IS NULL", now).
 		Joins("INNER JOIN parking_spot_available_day pad ON parking_spot.spot_id = pad.parking_spot_id").
-		Where("pad.is_available = ?", true).
-		Where("NOT EXISTS (SELECT 1 FROM rent WHERE rent.spot_id = parking_spot.spot_id AND rent.actual_end_time IS NULL)")
+		Where("pad.is_available = ?", true)
 
-	// 如果提供了 location，添加過濾條件
-	if location != "" {
-		query = query.Where("parking_spot.location LIKE ?", "%"+location+"%")
-	}
-
-	// 如果提供了 date，添加過濾條件；否則使用當前日期
+	// 添加日期過濾條件
 	if date != "" {
 		query = query.Where("pad.available_date = ?", date)
 	} else {
@@ -110,8 +186,19 @@ func GetAvailableParkingSpots(location, date string) ([]models.ParkingSpot, [][]
 	// 確保停車位狀態為 available
 	query = query.Where("parking_spot.status = ?", "available")
 
+	// 排除無效的經緯度 (0, 0)
+	query = query.Where("parking_spot.latitude != 0 AND parking_spot.longitude != 0")
+
+	// 添加距離過濾條件
+	query = query.Where(distanceSQL+" <= ?", latitude, longitude, latitude, radius)
+
+	// 添加租賃過濾條件
+	if len(rentedSpotIDs) > 0 {
+		query = query.Where("parking_spot.spot_id NOT IN (?)", rentedSpotIDs)
+	}
+
 	// 執行查詢
-	err := query.Find(&spots).Error
+	err = query.Find(&spots).Error
 	if err != nil {
 		log.Printf("Failed to query available parking spots: %v", err)
 		return nil, nil, fmt.Errorf("failed to query available parking spots: %w", err)
@@ -130,7 +217,7 @@ func GetAvailableParkingSpots(location, date string) ([]models.ParkingSpot, [][]
 
 	// 查詢可用日期
 	var availableDaysRecords []models.ParkingSpotAvailableDay
-	if err := database.DB.Where("parking_spot_id IN ?", spotIDs).Find(&availableDaysRecords).Error; err != nil {
+	if err := database.DB.Where("parking_spot_id IN ? AND available_date >= ?", spotIDs, today).Find(&availableDaysRecords).Error; err != nil {
 		log.Printf("Failed to fetch available days for spots: %v", err)
 		availableDaysRecords = []models.ParkingSpotAvailableDay{}
 	}
@@ -150,7 +237,7 @@ func GetAvailableParkingSpots(location, date string) ([]models.ParkingSpot, [][]
 		}
 	}
 
-	log.Printf("Successfully retrieved %d available parking spots", len(spots))
+	log.Printf("Successfully retrieved %d available parking spots within %f km", len(spots), radius)
 	return spots, availableDaysList, nil
 }
 
@@ -159,7 +246,7 @@ func GetParkingSpotByID(id int) (*models.ParkingSpot, []models.ParkingSpotAvaila
 	var spot models.ParkingSpot
 	if err := database.DB.
 		Preload("Member").
-		Preload("Rents"). // 應載入所有 Rents
+		Preload("Rents").
 		First(&spot, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("Parking spot with ID %d not found", id)
@@ -187,13 +274,13 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 			log.Printf("Parking spot with ID %d not found", id)
 			return fmt.Errorf("parking spot with ID %d not found", id)
 		}
-		log.Printf("Failed to find parking spot: %v", err)
+		log.Printf("Failed to find parking spot with ID %d: %v", id, err)
 		return fmt.Errorf("failed to find parking spot with ID %d: %w", id, err)
 	}
 
 	var member models.Member
 	if err := database.DB.Where("member_id = ?", spot.MemberID).First(&member).Error; err != nil {
-		log.Printf("Failed to verify member: %v", err)
+		log.Printf("Failed to verify member with ID %d: %v", spot.MemberID, err)
 		return fmt.Errorf("failed to verify member: %w", err)
 	}
 	if member.Role != "shared_owner" {
@@ -226,8 +313,8 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 			if !ok {
 				return fmt.Errorf("invalid status type: must be a string")
 			}
-			if status != "in_use" && status != "idle" {
-				return fmt.Errorf("invalid status: must be 'in_use' or 'idle'")
+			if status != "available" && status != "occupied" && status != "reserved" {
+				return fmt.Errorf("invalid status: must be 'available', 'occupied', or 'reserved'")
 			}
 			mappedFields["status"] = status
 		case "price_per_half_hour":
@@ -272,21 +359,21 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 				return fmt.Errorf("invalid available_days type: must be an array")
 			}
 			var dayInputs []AvailableDayInput
-			for _, day := range days {
+			for i, day := range days {
 				dayMap, ok := day.(map[string]interface{})
 				if !ok {
-					return fmt.Errorf("invalid day in available_days: must be an object")
+					return fmt.Errorf("invalid day at index %d in available_days: must be an object", i)
 				}
 				date, ok := dayMap["date"].(string)
 				if !ok {
-					return fmt.Errorf("invalid date in available_days: must be a string")
+					return fmt.Errorf("invalid date at index %d in available_days: must be a string", i)
 				}
 				isAvailable, ok := dayMap["is_available"].(bool)
 				if !ok {
-					return fmt.Errorf("invalid is_available in available_days: must be a boolean")
+					return fmt.Errorf("invalid is_available at index %d in available_days: must be a boolean", i)
 				}
 				if _, err := time.Parse("2006-01-02", date); err != nil {
-					return fmt.Errorf("invalid date format in available_days: %s", date)
+					return fmt.Errorf("invalid date format at index %d in available_days: %s", i, date)
 				}
 				dayInputs = append(dayInputs, AvailableDayInput{Date: date, IsAvailable: isAvailable})
 			}
@@ -294,24 +381,32 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 			tx := database.DB.Begin()
 			if err := tx.Where("parking_spot_id = ?", id).Delete(&models.ParkingSpotAvailableDay{}).Error; err != nil {
 				tx.Rollback()
+				log.Printf("Failed to delete existing available days for spot %d: %v", id, err)
 				return fmt.Errorf("failed to delete existing available days: %w", err)
 			}
-			for _, day := range dayInputs {
-				// 將 string 類型的日期解析為 time.Time
+			now := time.Now().UTC()
+			today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+			for i, day := range dayInputs {
 				parsedDate, err := time.Parse("2006-01-02", day.Date)
 				if err != nil {
 					tx.Rollback()
+					log.Printf("Failed to parse date at index %d: %v", i, err)
 					return fmt.Errorf("failed to parse date %s: %w", day.Date, err)
+				}
+				if parsedDate.Before(today) {
+					tx.Rollback()
+					return fmt.Errorf("available date at index %d must be today or in the future: %s", i, day.Date)
 				}
 				if err := tx.Create(&models.ParkingSpotAvailableDay{
 					SpotID:        id,
-					AvailableDate: parsedDate, // 使用解析後的 time.Time
+					AvailableDate: parsedDate,
 					IsAvailable:   day.IsAvailable,
 				}).Error; err != nil {
 					tx.Rollback()
 					if gormErr, ok := err.(*mysql.MySQLError); ok && gormErr.Number == 1062 {
 						return fmt.Errorf("duplicate entry for spot_id %d and date %s", id, day.Date)
 					}
+					log.Printf("Failed to insert available date %s for spot %d: %v", day.Date, id, err)
 					return fmt.Errorf("failed to insert available date %s: %w", day.Date, err)
 				}
 			}

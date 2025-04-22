@@ -8,6 +8,7 @@ import (
 	"project01/models"
 	"project01/services"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,11 +25,11 @@ type ParkingSpotInput struct {
 	FloorLevel       string              `json:"floor_level" binding:"omitempty,max=20"`
 	Location         string              `json:"location" binding:"required,max=50"`
 	PricingType      string              `json:"pricing_type" binding:"required,oneof=monthly hourly"`
-	PricePerHalfHour float64             `json:"price_per_half_hour" binding:"gte=0"` // 恢復 PricePerHalfHour
+	PricePerHalfHour float64             `json:"price_per_half_hour" binding:"gte=0"`
 	DailyMaxPrice    float64             `json:"daily_max_price" binding:"gte=0"`
-	MonthlyPrice     float64             `json:"monthly_price" binding:"gte=0"` // 新增 MonthlyPrice
-	Longitude        float64             `json:"longitude" binding:"gte=-180,lte=180"`
-	Latitude         float64             `json:"latitude" binding:"gte=-90,lte=90"`
+	MonthlyPrice     float64             `json:"monthly_price" binding:"gte=0"`
+	Longitude        float64             `json:"longitude" binding:"required,gte=-180,lte=180"`
+	Latitude         float64             `json:"latitude" binding:"required,gte=-90,lte=90"`
 	AvailableDays    []AvailableDayInput `json:"available_days" binding:"omitempty,dive"`
 }
 
@@ -66,22 +67,12 @@ func ShareParkingSpot(c *gin.Context) {
 		FloorLevel:       input.FloorLevel,
 		Location:         input.Location,
 		PricingType:      input.PricingType,
-		PricePerHalfHour: input.PricePerHalfHour, // 恢復 PricePerHalfHour
+		PricePerHalfHour: input.PricePerHalfHour,
 		DailyMaxPrice:    input.DailyMaxPrice,
-		MonthlyPrice:     input.MonthlyPrice, // 新增 MonthlyPrice
+		MonthlyPrice:     input.MonthlyPrice,
 		Longitude:        input.Longitude,
 		Latitude:         input.Latitude,
 		Status:           "available",
-	}
-
-	if spot.PricePerHalfHour == 0 && spot.PricingType == "hourly" {
-		spot.PricePerHalfHour = 20.00
-	}
-	if spot.DailyMaxPrice == 0 && spot.PricingType == "hourly" {
-		spot.DailyMaxPrice = 300.00
-	}
-	if spot.MonthlyPrice == 0 && spot.PricingType == "monthly" {
-		spot.MonthlyPrice = 5000.00
 	}
 
 	availableDays := make([]models.ParkingSpotAvailableDay, len(input.AvailableDays))
@@ -121,8 +112,15 @@ func ShareParkingSpot(c *gin.Context) {
 }
 
 func GetAvailableParkingSpots(c *gin.Context) {
+	// 獲取查詢參數
 	dateStr := c.Query("date")
-	log.Printf("Received request with date: %s", dateStr)
+	latitudeStr := c.Query("latitude")
+	longitudeStr := c.Query("longitude")
+	radiusStr := c.Query("radius")
+
+	log.Printf("Received request with date: %s, latitude: %s, longitude: %s, radius: %s", dateStr, latitudeStr, longitudeStr, radiusStr)
+
+	// 驗證 date 參數
 	if dateStr == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
@@ -132,77 +130,76 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		return
 	}
 
-	date, err := time.Parse("2006-01-02", dateStr)
+	// 驗證 latitude 和 longitude 參數
+	if latitudeStr == "" || longitudeStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "查詢失敗",
+			"error":   "請提供 latitude 和 longitude 參數",
+		})
+		return
+	}
+
+	latitude, err := strconv.ParseFloat(latitudeStr, 64)
+	if err != nil || latitude < -90 || latitude > 90 {
+		log.Printf("Invalid latitude: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "查詢失敗",
+			"error":   fmt.Sprintf("無效的緯度，應為 -90 到 90 之間的數字: %v", err),
+		})
+		return
+	}
+
+	longitude, err := strconv.ParseFloat(longitudeStr, 64)
+	if err != nil || longitude < -180 || longitude > 180 {
+		log.Printf("Invalid longitude: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "查詢失敗",
+			"error":   fmt.Sprintf("無效的經度，應為 -180 到 180 之間的數字: %v", err),
+		})
+		return
+	}
+
+	// 解析 radius 參數
+	radius := 0.0 // 預設值為 0，表示使用服務層的預設值（3 公里）
+	if radiusStr != "" {
+		radius, err = strconv.ParseFloat(radiusStr, 64)
+		if err != nil || radius < 0 {
+			log.Printf("Invalid radius: %v", err)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  false,
+				"message": "查詢失敗",
+				"error":   fmt.Sprintf("無效的 radius，應為正數: %v", err),
+			})
+			return
+		}
+	}
+
+	// 調用服務層函數，傳遞經緯度和 radius
+	parkingSpots, availableDaysList, err := services.GetAvailableParkingSpots(dateStr, latitude, longitude, radius)
 	if err != nil {
-		log.Printf("Invalid date format: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  false,
-			"message": "查詢失敗",
-			"error":   fmt.Sprintf("無效的日期格式，應為 YYYY-MM-DD: %v", err),
-		})
-		return
-	}
-
-	parsedDateStr := date.Format("2006-01-02")
-	if parsedDateStr != dateStr {
-		log.Printf("Invalid date (e.g., 2025-02-30 does not exist)")
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  false,
-			"message": "查詢失敗",
-			"error":   "無效的日期（例如 2025-02-30 不存在）",
-		})
-		return
-	}
-
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	if date.Before(today) {
-		log.Printf("Date must be today or in the future: %s", dateStr)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  false,
-			"message": "查詢失敗",
-			"error":   "日期必須為今天或未來的日期",
-		})
-		return
-	}
-
-	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
-	endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Nanosecond)
-
-	var rentedSpotIDs []int
-	if err := database.DB.Model(&models.Rent{}).
-		Select("spot_id").
-		Where("(actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)", now, startOfDay, endOfDay).
-		Distinct().
-		Scan(&rentedSpotIDs).Error; err != nil {
-		log.Printf("Failed to query rented spot IDs: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  false,
-			"message": "查詢失敗",
-			"error":   "failed to query rented spot IDs: database error",
-		})
-		return
-	}
-	log.Printf("Rented spot IDs: %v", rentedSpotIDs)
-
-	var parkingSpots []models.ParkingSpot
-	query := database.DB.
-		Preload("Member").
-		Preload("Rents", "end_time >= ? OR actual_end_time IS NULL", now).
-		Preload("AvailableDays", "DATE(available_date) = ? AND is_available = ?", dateStr, true).
-		Where("status = ?", "available")
-
-	if len(rentedSpotIDs) > 0 {
-		query = query.Where("spot_id NOT IN (?)", rentedSpotIDs)
-	}
-
-	if err := query.Find(&parkingSpots).Error; err != nil {
 		log.Printf("Failed to get parking spots: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  false,
-			"message": "查詢失敗",
-			"error":   "failed to get parking spots: database error",
-		})
+		if strings.Contains(err.Error(), "invalid date format") {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  false,
+				"message": "查詢失敗",
+				"error":   "無效的日期格式，應為 YYYY-MM-DD",
+			})
+		} else if strings.Contains(err.Error(), "date must be today or in the future") {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  false,
+				"message": "查詢失敗",
+				"error":   "日期必須為今天或未來的日期",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  false,
+				"message": "查詢失敗",
+				"error":   fmt.Sprintf("failed to get parking spots: %v", err),
+			})
+		}
 		return
 	}
 
@@ -213,7 +210,9 @@ func GetAvailableParkingSpots(c *gin.Context) {
 
 	var availableSpots []models.ParkingSpot
 	unavailableSpots := []int{}
-	for _, spot := range parkingSpots {
+	for i, spot := range parkingSpots {
+		// 確保每個車位都有可用日期記錄
+		spot.AvailableDays = availableDaysList[i]
 		if len(spot.AvailableDays) > 0 {
 			availableSpots = append(availableSpots, spot)
 			log.Printf("Spot %d included in available spots", spot.SpotID)
@@ -226,7 +225,7 @@ func GetAvailableParkingSpots(c *gin.Context) {
 	log.Printf("Found %d parking spots, %d available after filtering for date %s", len(parkingSpots), len(availableSpots), dateStr)
 
 	if len(availableSpots) == 0 {
-		message := fmt.Sprintf("所選條件（日期：%s）目前沒有符合的車位！請調整篩選條件。", dateStr)
+		message := fmt.Sprintf("所選條件（日期：%s，經緯度：%s, %s）目前沒有符合的車位！請調整篩選條件。", dateStr, latitudeStr, longitudeStr)
 		if len(unavailableSpots) > 0 {
 			message += fmt.Sprintf(" 以下車位未設定可用日期：%v", unavailableSpots)
 		}

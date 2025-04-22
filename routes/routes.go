@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5" // 更新為 jwt/v5
+	"github.com/golang-jwt/jwt/v5"
 )
 
-// AuthMiddleware 驗證 JWT token
+// AuthMiddleware 驗證 JWT token，並提取 member_id 和 role
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -57,7 +57,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			if claims, ok := token.Claims.(jwt.MapClaims); ok {
 				log.Printf("Token claims: exp=%v, current_time=%v", claims["exp"], time.Now().Unix())
 			}
-			if errors.Is(err, jwt.ErrTokenExpired) { // 使用 errors.Is 確保正確匹配
+			if errors.Is(err, jwt.ErrTokenExpired) {
 				c.JSON(http.StatusUnauthorized, gin.H{
 					"status":  false,
 					"message": "token 已過期",
@@ -107,8 +107,23 @@ func AuthMiddleware() gin.HandlerFunc {
 				return
 			}
 
-			log.Printf("Token verified for member_id: %d", int(memberID))
+			// 確認 role 字段
+			role, ok := claims["role"].(string)
+			if !ok || (role != "renter" && role != "shared_owner" && role != "admin") {
+				log.Printf("Missing or invalid role in token: %v", role)
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"status":  false,
+					"message": "無效的角色",
+					"error":   "Invalid role in token",
+					"code":    "ERR_INVALID_ROLE",
+				})
+				c.Abort()
+				return
+			}
+
+			log.Printf("Token verified for member_id: %d, role: %s", int(memberID), role)
 			c.Set("member_id", int(memberID))
+			c.Set("role", role) // 將 role 存入上下文
 		} else {
 			log.Printf("Invalid token claims or token is not valid")
 			c.JSON(http.StatusUnauthorized, gin.H{
@@ -116,6 +131,56 @@ func AuthMiddleware() gin.HandlerFunc {
 				"message": "無效的 token 內容",
 				"error":   "Invalid token claims or token is not valid",
 				"code":    "ERR_INVALID_CLAIMS",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// RoleMiddleware 檢查會員角色是否符合要求
+func RoleMiddleware(allowedRoles ...string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role, exists := c.Get("role")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "無法獲取角色資訊",
+				"error":   "Role not found in context",
+				"code":    "ERR_ROLE_NOT_FOUND",
+			})
+			c.Abort()
+			return
+		}
+
+		roleStr, ok := role.(string)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "無效的角色類型",
+				"error":   "Invalid role type",
+				"code":    "ERR_INVALID_ROLE_TYPE",
+			})
+			c.Abort()
+			return
+		}
+
+		allowed := false
+		for _, allowedRole := range allowedRoles {
+			if roleStr == allowedRole {
+				allowed = true
+				break
+			}
+		}
+
+		if !allowed {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  false,
+				"message": "權限不足",
+				"error":   "Insufficient role permissions",
+				"code":    "ERR_INSUFFICIENT_PERMISSIONS",
 			})
 			c.Abort()
 			return
@@ -146,11 +211,11 @@ func Path(router *gin.RouterGroup) {
 			membersWithAuth := members.Group("")
 			membersWithAuth.Use(AuthMiddleware())
 			{
-				membersWithAuth.GET("all", handlers.GetAllMembers)             // 查詢所有會員
-				membersWithAuth.GET("/:id", handlers.GetMember)                // 查詢會員
-				membersWithAuth.PUT("/:id", handlers.UpdateMember)             // 更新會員資料
-				membersWithAuth.DELETE("/:id", handlers.DeleteMember)          // 刪除會員
-				membersWithAuth.GET("/:id/history", handlers.GetMemberHistory) // 查詢特定會員的租賃歷史記錄
+				// 管理員專屬路由
+				membersWithAuth.GET("/all", RoleMiddleware("admin"), handlers.GetAllMembers)   // 查詢所有會員
+				membersWithAuth.GET("/:id", RoleMiddleware("admin"), handlers.GetMember)       // 查詢特定會員
+				membersWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateMember)    // 更新會員資料
+				membersWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteMember) // 刪除會員
 			}
 		}
 
@@ -158,15 +223,18 @@ func Path(router *gin.RouterGroup) {
 		parking := v1.Group("/parking")
 		{
 			// 公開路由：不需要 token 驗證
-			parking.POST("share", handlers.ShareParkingSpot) // 共享車位
-
-			// 受保護路由：需要 token 驗證
+			// 根據需求，共享車位需要驗證並限制為 shared_owner 或 admin
 			parkingWithAuth := parking.Group("")
 			parkingWithAuth.Use(AuthMiddleware())
 			{
-				parkingWithAuth.GET("/available", handlers.GetAvailableParkingSpots) // 查詢可用車位
-				parkingWithAuth.GET("/:id", handlers.GetParkingSpot)                 // 查詢特定車位
-				parkingWithAuth.PUT("/:id", handlers.UpdateParkingSpot)              // 更新車位信息
+				// 共享車位：僅 shared_owner 和 admin 可以操作
+				parkingWithAuth.POST("/share", RoleMiddleware("shared_owner", "admin"), handlers.ShareParkingSpot)
+				// 查詢可用車位：renter 和 shared_owner 都可以訪問
+				parkingWithAuth.GET("/available", RoleMiddleware("renter", "shared_owner"), handlers.GetAvailableParkingSpots)
+				// 查詢特定車位：renter 和 shared_owner 都可以訪問
+				parkingWithAuth.GET("/:id", RoleMiddleware("renter", "shared_owner"), handlers.GetParkingSpot)
+				// 查看車位收入：僅 shared_owner 可以訪問，且只能查看自己的車位
+				parkingWithAuth.GET("/:id/income", RoleMiddleware("shared_owner"), handlers.GetParkingSpotIncome)
 			}
 		}
 
@@ -177,11 +245,16 @@ func Path(router *gin.RouterGroup) {
 			rentWithAuth := rent.Group("")
 			rentWithAuth.Use(AuthMiddleware())
 			{
-				rentWithAuth.POST("", handlers.RentParkingSpot)       // 租用車位
-				rentWithAuth.POST("/:id/leave", handlers.LeaveAndPay) // 離開結算
-				rentWithAuth.GET("", handlers.GetRentRecords)         // 查詢所有租用紀錄
-				rentWithAuth.GET("/:id", handlers.GetRentByID)        // 查詢特定租賃記錄
-				rentWithAuth.DELETE("/:id", handlers.CancelRent)      // 取消租用
+				// 租用車位：renter 和 shared_owner 都可以操作
+				rentWithAuth.POST("", RoleMiddleware("renter", "shared_owner"), handlers.RentParkingSpot)
+				// 離開結算：renter 和 shared_owner 都可以操作
+				rentWithAuth.POST("/:id/leave", RoleMiddleware("renter", "shared_owner"), handlers.LeaveAndPay)
+				// 查詢所有租賃記錄：renter 和 shared_owner 都可以訪問
+				rentWithAuth.GET("", RoleMiddleware("renter", "shared_owner"), handlers.GetRentRecords)
+				// 查詢特定租賃記錄：renter 和 shared_owner 都可以訪問
+				rentWithAuth.GET("/:id", RoleMiddleware("renter", "shared_owner"), handlers.GetRentByID)
+				// 取消租用：renter 和 shared_owner 都可以操作
+				rentWithAuth.DELETE("/:id", RoleMiddleware("renter", "shared_owner"), handlers.CancelRent)
 			}
 		}
 	}

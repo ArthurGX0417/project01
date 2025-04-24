@@ -439,7 +439,7 @@ type AvailableDayInput struct {
 // GetParkingSpotIncome 計算指定車位在指定時間範圍內的收入
 func GetParkingSpotIncome(spotID int, startDate, endDate time.Time, currentMemberID int, role string) (float64, *models.ParkingSpot, error) {
 	// 驗證角色
-	validRoles := map[string]bool{"admin": true, "shared_owner": true, "renter": true}
+	validRoles := map[string]bool{"admin": true, "shared_owner": true}
 	if !validRoles[role] {
 		log.Printf("Invalid role: %s", role)
 		return 0, nil, fmt.Errorf("invalid role: %s", role)

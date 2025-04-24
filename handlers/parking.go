@@ -385,6 +385,40 @@ func GetParkingSpotIncome(c *gin.Context) {
 		return
 	}
 
+	// 獲取查詢參數 start_date 和 end_date
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
+
+	// 驗證日期參數是否存在
+	if startDateStr == "" || endDateStr == "" {
+		ErrorResponse(c, http.StatusBadRequest, "缺少日期範圍", "start_date and end_date are required", "ERR_MISSING_DATE_RANGE")
+		return
+	}
+
+	// 解析日期
+	startDate, err := time.Parse("2006-01-02", startDateStr)
+	if err != nil {
+		log.Printf("Invalid start_date format: %v", err)
+		ErrorResponse(c, http.StatusBadRequest, "無效的開始日期格式", "start_date must be in YYYY-MM-DD format", "ERR_INVALID_START_DATE")
+		return
+	}
+
+	endDate, err := time.Parse("2006-01-02", endDateStr)
+	if err != nil {
+		log.Printf("Invalid end_date format: %v", err)
+		ErrorResponse(c, http.StatusBadRequest, "無效的結束日期格式", "end_date must be in YYYY-MM-DD format", "ERR_INVALID_END_DATE")
+		return
+	}
+
+	// 確保開始日期不晚於結束日期
+	if startDate.After(endDate) {
+		ErrorResponse(c, http.StatusBadRequest, "日期範圍無效", "start_date cannot be later than end_date", "ERR_INVALID_DATE_RANGE")
+		return
+	}
+
+	// 將 endDate 調整到當天的 23:59:59，以便包含整天的記錄
+	endDate = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 0, time.UTC)
+
 	// 獲取當前會員 ID 和角色
 	currentMemberID, exists := c.Get("member_id")
 	if !exists {
@@ -398,7 +432,7 @@ func GetParkingSpotIncome(c *gin.Context) {
 		return
 	}
 
-	// 查詢車位
+	// 查詢車位並預加載租賃記錄
 	var spot models.ParkingSpot
 	if err := database.DB.Preload("Rents").First(&spot, id).Error; err != nil {
 		log.Printf("Failed to find parking spot %d: %v", id, err)
@@ -412,9 +446,13 @@ func GetParkingSpotIncome(c *gin.Context) {
 		return
 	}
 
-	// 計算總收入
+	// 計算指定時間範圍內的總收入
 	var totalIncome float64
 	for _, rent := range spot.Rents {
+		// 檢查租賃是否在指定時間範圍內（根據 StartTime）
+		if rent.StartTime.Before(startDate) || rent.StartTime.After(endDate) {
+			continue // 跳過不在範圍內的租賃記錄
+		}
 		if rent.TotalCost > 0 { // 確保只計算已結算的租賃
 			totalIncome += rent.TotalCost
 		}
@@ -424,6 +462,8 @@ func GetParkingSpotIncome(c *gin.Context) {
 	response := gin.H{
 		"spot_id":      spot.SpotID,
 		"location":     spot.Location,
+		"start_date":   startDateStr,
+		"end_date":     endDateStr,
 		"total_income": totalIncome,
 	}
 

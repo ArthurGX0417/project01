@@ -374,7 +374,7 @@ func UpdateParkingSpot(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "車位更新成功", updatedSpot.ToResponse(availableDays, rents))
 }
 
-// GetParkingSpotIncome 查看指定車位的收入（僅限 shared_owner）
+// GetParkingSpotIncome 查看指定車位的收入（僅限 shared_owner 或 admin）
 func GetParkingSpotIncome(c *gin.Context) {
 	log.Printf("Received request for GetParkingSpotIncome with spot_id: %s", c.Param("id"))
 
@@ -439,10 +439,31 @@ func GetParkingSpotIncome(c *gin.Context) {
 		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type", "ERR_INVALID_MEMBER_ID_TYPE")
 		return
 	}
-	log.Printf("Authenticated member - member_id: %d", currentMemberIDInt)
 
-	// 調用 services 層計算收入
-	totalIncome, spot, err := services.GetParkingSpotIncome(id, startDate, endDate, currentMemberIDInt)
+	currentRole, exists := c.Get("role")
+	if !exists {
+		log.Printf("Role not found in token")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "role not found in token", "ERR_NO_ROLE")
+		return
+	}
+
+	currentRoleStr, ok := currentRole.(string)
+	if !ok {
+		log.Printf("Invalid role type: %v", currentRole)
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid role type", "ERR_INVALID_ROLE_TYPE")
+		return
+	}
+	log.Printf("Authenticated member - member_id: %d, role: %s", currentMemberIDInt, currentRoleStr)
+
+	// 在獲取角色後添加檢查
+	if currentRoleStr == "renter" {
+		log.Printf("Renter role is not allowed to view parking spot income")
+		ErrorResponse(c, http.StatusForbidden, "無權限", "renter role cannot view parking spot income", "ERR_INSUFFICIENT_PERMISSIONS")
+		return
+	}
+
+	// 調用 services 層計算收入，傳遞角色
+	totalIncome, spot, err := services.GetParkingSpotIncome(id, startDate, endDate, currentMemberIDInt, currentRoleStr)
 	if err != nil {
 		log.Printf("Failed to get parking spot income: %v", err)
 		if strings.Contains(err.Error(), "parking spot not found") {

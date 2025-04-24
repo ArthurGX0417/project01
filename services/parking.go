@@ -437,37 +437,40 @@ type AvailableDayInput struct {
 }
 
 // GetParkingSpotIncome 計算指定車位在指定時間範圍內的收入
-func GetParkingSpotIncome(spotID int, startDate, endDate time.Time, currentMemberID int) (float64, *models.ParkingSpot, error) {
-	// 查詢車位並預加載租賃記錄
+func GetParkingSpotIncome(spotID int, startDate, endDate time.Time, currentMemberID int, role string) (float64, *models.ParkingSpot, error) {
+	// 驗證角色
+	validRoles := map[string]bool{"admin": true, "shared_owner": true, "renter": true}
+	if !validRoles[role] {
+		log.Printf("Invalid role: %s", role)
+		return 0, nil, fmt.Errorf("invalid role: %s", role)
+	}
+
+	// 查詢車位
 	var spot models.ParkingSpot
-	if err := database.DB.Preload("Rents").First(&spot, spotID).Error; err != nil {
+	if err := database.DB.First(&spot, spotID).Error; err != nil {
 		log.Printf("Failed to find parking spot %d: %v", spotID, err)
 		return 0, nil, fmt.Errorf("parking spot not found: %w", err)
 	}
 
-	// 檢查車位是否屬於當前會員
-	if spot.MemberID != currentMemberID {
-		log.Printf("Permission denied: member %d is not the owner of spot %d (owned by member %d)", currentMemberID, spot.SpotID, spot.MemberID)
-		return 0, nil, fmt.Errorf("permission denied: you can only view income of your own parking spot")
+	// 檢查權限：admin 可以查看任何車位，shared_owner 只能查看自己的車位
+	if role != "admin" {
+		if spot.MemberID != currentMemberID {
+			log.Printf("Permission denied: member %d (role: %s) is not the owner of spot %d (owned by member %d)", currentMemberID, role, spot.SpotID, spot.MemberID)
+			return 0, nil, fmt.Errorf("permission denied: you can only view income of your own parking spot")
+		}
 	}
+	log.Printf("Permission granted: member %d (role: %s) can view income of spot %d", currentMemberID, role, spot.SpotID)
 
-	// 計算指定時間範圍內的總收入
+	// 直接在資料庫層計算總收入
 	var totalIncome float64
-	log.Printf("Found %d rent records for spot %d", len(spot.Rents), spot.SpotID)
-	for _, rent := range spot.Rents {
-		log.Printf("Processing rent_id %d: start_time=%s, total_cost=%.2f", rent.RentID, rent.StartTime.Format(time.RFC3339), rent.TotalCost)
-		if rent.StartTime.Before(startDate) || rent.StartTime.After(endDate) {
-			log.Printf("Rent_id %d skipped: start_time %s is outside the range", rent.RentID, rent.StartTime.Format(time.RFC3339))
-			continue
-		}
-		if rent.TotalCost > 0 {
-			totalIncome += rent.TotalCost
-			log.Printf("Rent_id %d included: total_cost=%.2f", rent.RentID, rent.TotalCost)
-		} else {
-			log.Printf("Rent_id %d skipped: total_cost is 0", rent.RentID)
-		}
+	if err := database.DB.Model(&models.Rent{}).
+		Where("spot_id = ? AND start_time >= ? AND start_time <= ? AND total_cost > 0", spotID, startDate, endDate).
+		Select("COALESCE(SUM(total_cost), 0)").
+		Scan(&totalIncome).Error; err != nil {
+		log.Printf("Failed to calculate income for spot %d: %v", spotID, err)
+		return 0, nil, fmt.Errorf("failed to calculate income: %w", err)
 	}
-	log.Printf("Calculated total income for spot %d: %.2f", spot.SpotID, totalIncome)
 
+	log.Printf("Calculated total income for spot %d: %.2f", spot.SpotID, totalIncome)
 	return totalIncome, &spot, nil
 }

@@ -376,6 +376,8 @@ func UpdateParkingSpot(c *gin.Context) {
 
 // GetParkingSpotIncome 查看指定車位的收入（僅限 shared_owner）
 func GetParkingSpotIncome(c *gin.Context) {
+	log.Printf("Received request for GetParkingSpotIncome with spot_id: %s", c.Param("id"))
+
 	// 獲取車位 ID
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -388,9 +390,11 @@ func GetParkingSpotIncome(c *gin.Context) {
 	// 獲取查詢參數 start_date 和 end_date
 	startDateStr := c.Query("start_date")
 	endDateStr := c.Query("end_date")
+	log.Printf("Query parameters - start_date: %s, end_date: %s", startDateStr, endDateStr)
 
 	// 驗證日期參數是否存在
 	if startDateStr == "" || endDateStr == "" {
+		log.Printf("Missing date range: start_date or end_date is empty")
 		ErrorResponse(c, http.StatusBadRequest, "缺少日期範圍", "start_date and end_date are required", "ERR_MISSING_DATE_RANGE")
 		return
 	}
@@ -412,50 +416,43 @@ func GetParkingSpotIncome(c *gin.Context) {
 
 	// 確保開始日期不晚於結束日期
 	if startDate.After(endDate) {
+		log.Printf("Invalid date range: start_date %s is after end_date %s", startDateStr, endDateStr)
 		ErrorResponse(c, http.StatusBadRequest, "日期範圍無效", "start_date cannot be later than end_date", "ERR_INVALID_DATE_RANGE")
 		return
 	}
 
 	// 將 endDate 調整到當天的 23:59:59，以便包含整天的記錄
 	endDate = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 0, time.UTC)
+	log.Printf("Adjusted date range - start_date: %s, end_date: %s", startDate.Format(time.RFC3339), endDate.Format(time.RFC3339))
 
 	// 獲取當前會員 ID 和角色
 	currentMemberID, exists := c.Get("member_id")
 	if !exists {
+		log.Printf("Member ID not found in token")
 		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token", "ERR_NO_MEMBER_ID")
 		return
 	}
 
 	currentMemberIDInt, ok := currentMemberID.(int)
 	if !ok {
+		log.Printf("Invalid member_id type: %v", currentMemberID)
 		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type", "ERR_INVALID_MEMBER_ID_TYPE")
 		return
 	}
+	log.Printf("Authenticated member - member_id: %d", currentMemberIDInt)
 
-	// 查詢車位並預加載租賃記錄
-	var spot models.ParkingSpot
-	if err := database.DB.Preload("Rents").First(&spot, id).Error; err != nil {
-		log.Printf("Failed to find parking spot %d: %v", id, err)
-		ErrorResponse(c, http.StatusNotFound, "車位不存在", "parking spot not found", "ERR_SPOT_NOT_FOUND")
-		return
-	}
-
-	// 檢查車位是否屬於當前會員
-	if spot.MemberID != currentMemberIDInt {
-		ErrorResponse(c, http.StatusForbidden, "無權限", "you can only view income of your own parking spot", "ERR_INSUFFICIENT_PERMISSIONS")
-		return
-	}
-
-	// 計算指定時間範圍內的總收入
-	var totalIncome float64
-	for _, rent := range spot.Rents {
-		// 檢查租賃是否在指定時間範圍內（根據 StartTime）
-		if rent.StartTime.Before(startDate) || rent.StartTime.After(endDate) {
-			continue // 跳過不在範圍內的租賃記錄
+	// 調用 services 層計算收入
+	totalIncome, spot, err := services.GetParkingSpotIncome(id, startDate, endDate, currentMemberIDInt)
+	if err != nil {
+		log.Printf("Failed to get parking spot income: %v", err)
+		if strings.Contains(err.Error(), "parking spot not found") {
+			ErrorResponse(c, http.StatusNotFound, "車位不存在", "parking spot not found", "ERR_SPOT_NOT_FOUND")
+		} else if strings.Contains(err.Error(), "permission denied") {
+			ErrorResponse(c, http.StatusForbidden, "無權限", "you can only view income of your own parking spot", "ERR_INSUFFICIENT_PERMISSIONS")
+		} else {
+			ErrorResponse(c, http.StatusInternalServerError, "查詢車位收入失敗", err.Error(), "ERR_INTERNAL_SERVER")
 		}
-		if rent.TotalCost > 0 { // 確保只計算已結算的租賃
-			totalIncome += rent.TotalCost
-		}
+		return
 	}
 
 	// 返回收入數據
@@ -467,5 +464,6 @@ func GetParkingSpotIncome(c *gin.Context) {
 		"total_income": totalIncome,
 	}
 
+	log.Printf("Sending response: %v", response)
 	SuccessResponse(c, http.StatusOK, "查詢車位收入成功", response)
 }

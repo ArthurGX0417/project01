@@ -470,6 +470,8 @@ func GetParkingSpotIncome(c *gin.Context) {
 			ErrorResponse(c, http.StatusNotFound, "車位不存在", "parking spot not found", "ERR_SPOT_NOT_FOUND")
 		} else if strings.Contains(err.Error(), "permission denied") {
 			ErrorResponse(c, http.StatusForbidden, "無權限", "you can only view income of your own parking spot", "ERR_INSUFFICIENT_PERMISSIONS")
+		} else if strings.Contains(err.Error(), "invalid role") {
+			ErrorResponse(c, http.StatusForbidden, "無權限", "invalid role", "ERR_INSUFFICIENT_PERMISSIONS")
 		} else {
 			ErrorResponse(c, http.StatusInternalServerError, "查詢車位收入失敗", err.Error(), "ERR_INTERNAL_SERVER")
 		}

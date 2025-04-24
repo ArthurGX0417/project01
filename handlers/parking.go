@@ -455,13 +455,6 @@ func GetParkingSpotIncome(c *gin.Context) {
 	}
 	log.Printf("Authenticated member - member_id: %d, role: %s", currentMemberIDInt, currentRoleStr)
 
-	// 在獲取角色後添加檢查
-	if currentRoleStr == "renter" {
-		log.Printf("Renter role is not allowed to view parking spot income")
-		ErrorResponse(c, http.StatusForbidden, "無權限", "renter role cannot view parking spot income", "ERR_INSUFFICIENT_PERMISSIONS")
-		return
-	}
-
 	// 調用 services 層計算收入，傳遞角色
 	totalIncome, spot, err := services.GetParkingSpotIncome(id, startDate, endDate, currentMemberIDInt, currentRoleStr)
 	if err != nil {

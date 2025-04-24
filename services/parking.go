@@ -474,3 +474,49 @@ func GetParkingSpotIncome(spotID int, startDate, endDate time.Time, currentMembe
 	log.Printf("Calculated total income for spot %d: %.2f", spot.SpotID, totalIncome)
 	return totalIncome, &spot, nil
 }
+
+func DeleteParkingSpot(spotID int, currentMemberID int, role string) error {
+	// 查詢車位
+	var spot models.ParkingSpot
+	if err := database.DB.First(&spot, spotID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("Parking spot with ID %d not found", spotID)
+			return fmt.Errorf("parking spot not found")
+		}
+		log.Printf("Failed to find parking spot %d: %v", spotID, err)
+		return fmt.Errorf("failed to find parking spot: %w", err)
+	}
+
+	// 檢查權限：admin 可以刪除任何車位，shared_owner 只能刪除自己的車位
+	if role != "admin" {
+		if spot.MemberID != currentMemberID {
+			log.Printf("Permission denied: member %d (role: %s) is not the owner of spot %d (owned by member %d)", currentMemberID, role, spot.SpotID, spot.MemberID)
+			return fmt.Errorf("permission denied: you can only delete your own parking spot")
+		}
+	}
+
+	// 開始事務
+	tx := database.DB.Begin()
+
+	// 刪除相關的可用日期記錄
+	if err := tx.Where("parking_spot_id = ?", spotID).Delete(&models.ParkingSpotAvailableDay{}).Error; err != nil {
+		tx.Rollback()
+		log.Printf("Failed to delete available days for spot %d: %v", spotID, err)
+		return fmt.Errorf("failed to delete available days: %w", err)
+	}
+
+	// 刪除車位
+	if err := tx.Delete(&spot).Error; err != nil {
+		tx.Rollback()
+		log.Printf("Failed to delete parking spot %d: %v", spotID, err)
+		return fmt.Errorf("failed to delete parking spot: %w", err)
+	}
+
+	// 提交事務
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("Successfully deleted parking spot with ID %d", spotID)
+	return nil
+}

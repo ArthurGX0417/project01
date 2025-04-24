@@ -260,68 +260,72 @@ func DeleteMember(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "刪除成功", nil)
 }
 
-// GetMemberHistory 查詢特定會員的租賃歷史記錄
-func GetMemberHistory(c *gin.Context) {
+// GetMemberRentHistory 查詢特定會員的租賃歷史記錄
+func GetMemberRentHistory(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		log.Printf("Invalid member ID: %v", err)
-		ErrorResponse(c, http.StatusBadRequest, "無效的會員ID", err.Error())
+		ErrorResponse(c, http.StatusBadRequest, "無效的會員ID", "member ID must be a number", "ERR_INVALID_MEMBER_ID")
 		return
 	}
 
+	// 檢查會員是否存在
+	member, err := services.GetMemberByID(id)
+	if err != nil {
+		log.Printf("Failed to get member: %v", err)
+		ErrorResponse(c, http.StatusInternalServerError, "查詢會員失敗", err.Error(), "ERR_INTERNAL_SERVER")
+		return
+	}
+	if member == nil {
+		ErrorResponse(c, http.StatusNotFound, "會員不存在", "member not found", "ERR_MEMBER_NOT_FOUND")
+		return
+	}
+
+	// 查詢租賃歷史
 	rents, err := services.GetMemberRentHistory(id)
 	if err != nil {
-		log.Printf("Failed to get rent history: %v", err)
-		ErrorResponse(c, http.StatusInternalServerError, "查詢租賃歷史失敗", err.Error())
+		log.Printf("Failed to get rent history for member %d: %v", id, err)
+		ErrorResponse(c, http.StatusInternalServerError, "查詢租賃歷史失敗", err.Error(), "ERR_INTERNAL_SERVER")
 		return
-	}
-
-	// 收集所有相關的 spot_id
-	spotIDs := make([]int, len(rents))
-	for i, rent := range rents {
-		spotIDs[i] = rent.SpotID
-	}
-
-	// 查詢所有停車位的可用天數
-	var availableDaysRecords []models.ParkingSpotAvailableDay
-	availableDaysMap := make(map[int][]models.ParkingSpotAvailableDay)
-	if len(spotIDs) > 0 {
-		if err := database.DB.Where("parking_spot_id IN ?", spotIDs).Find(&availableDaysRecords).Error; err != nil {
-			log.Printf("Failed to fetch available days for spots: %v", err)
-			availableDaysRecords = []models.ParkingSpotAvailableDay{}
-		}
-		for _, record := range availableDaysRecords {
-			availableDaysMap[record.SpotID] = append(availableDaysMap[record.SpotID], record)
-		}
-	}
-
-	// 查詢所有停車位的租賃記錄
-	var parkingSpotRents []models.Rent
-	parkingSpotRentsMap := make(map[int][]models.Rent)
-	if len(spotIDs) > 0 {
-		if err := database.DB.Where("spot_id IN ?", spotIDs).Find(&parkingSpotRents).Error; err != nil {
-			log.Printf("Failed to fetch rents for spots: %v", err)
-			parkingSpotRents = []models.Rent{}
-		}
-		for _, rent := range parkingSpotRents {
-			parkingSpotRentsMap[rent.SpotID] = append(parkingSpotRentsMap[rent.SpotID], rent)
-		}
 	}
 
 	// 轉換為 RentResponse
 	rentResponses := make([]models.RentResponse, len(rents))
 	for i, rent := range rents {
-		availableDays := availableDaysMap[rent.SpotID]
-		if availableDays == nil {
-			availableDays = []models.ParkingSpotAvailableDay{}
-		}
-		spotRents := parkingSpotRentsMap[rent.SpotID]
-		if spotRents == nil {
-			spotRents = []models.Rent{}
-		}
-		rentResponses[i] = rent.ToResponse(availableDays, spotRents)
+		rentResponses[i] = rent.ToResponse([]models.ParkingSpotAvailableDay{}, []models.Rent{})
 	}
 
 	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)
+}
+
+// GetMemberProfile 查看個人資料
+func GetMemberProfile(c *gin.Context) {
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		log.Printf("Failed to get member_id from context")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token", "ERR_NO_MEMBER_ID")
+		return
+	}
+
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		log.Printf("Invalid member_id type in context")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type", "ERR_INVALID_MEMBER_ID_TYPE")
+		return
+	}
+
+	member, err := services.GetMemberProfileData(currentMemberIDInt)
+	if err != nil {
+		log.Printf("Failed to get member: %v", err)
+		ErrorResponse(c, http.StatusInternalServerError, "查詢會員失敗", err.Error(), "ERR_INTERNAL_SERVER")
+		return
+	}
+	if member == nil {
+		ErrorResponse(c, http.StatusNotFound, "會員不存在", "member not found", "ERR_MEMBER_NOT_FOUND")
+		return
+	}
+
+	SuccessResponse(c, http.StatusOK, "查詢成功", member.ToResponse())
+	log.Printf("Successfully retrieved profile for member %d", currentMemberIDInt)
 }

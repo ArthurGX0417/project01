@@ -483,3 +483,57 @@ func GetParkingSpotIncome(c *gin.Context) {
 	log.Printf("Sending response: %v", response)
 	SuccessResponse(c, http.StatusOK, "查詢車位收入成功", response)
 }
+
+func DeleteParkingSpot(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		log.Printf("Invalid parking spot ID: %v", err)
+		ErrorResponse(c, http.StatusBadRequest, "無效的車位ID", err.Error(), "ERR_INVALID_SPOT_ID")
+		return
+	}
+
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		log.Printf("Failed to get member_id from context")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token", "ERR_NO_MEMBER_ID")
+		return
+	}
+
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		log.Printf("Invalid member_id type in context")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type", "ERR_INVALID_MEMBER_ID_TYPE")
+		return
+	}
+
+	currentRole, exists := c.Get("role")
+	if !exists {
+		log.Printf("Role not found in token")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "role not found in token", "ERR_NO_ROLE")
+		return
+	}
+
+	currentRoleStr, ok := currentRole.(string)
+	if !ok {
+		log.Printf("Invalid role type: %v", currentRole)
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid role type", "ERR_INVALID_ROLE_TYPE")
+		return
+	}
+
+	// 調用 services 層刪除車位
+	err = services.DeleteParkingSpot(id, currentMemberIDInt, currentRoleStr)
+	if err != nil {
+		log.Printf("Failed to delete parking spot: %v", err)
+		if strings.Contains(err.Error(), "parking spot not found") {
+			ErrorResponse(c, http.StatusNotFound, "車位不存在", "parking spot not found", "ERR_SPOT_NOT_FOUND")
+		} else if strings.Contains(err.Error(), "permission denied") {
+			ErrorResponse(c, http.StatusForbidden, "無權限", "you can only delete your own parking spot", "ERR_PERMISSION_DENIED")
+		} else {
+			ErrorResponse(c, http.StatusInternalServerError, "刪除車位失敗", err.Error(), "ERR_INTERNAL_SERVER")
+		}
+		return
+	}
+
+	SuccessResponse(c, http.StatusOK, "車位刪除成功", nil)
+}

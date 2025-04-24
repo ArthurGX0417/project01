@@ -137,6 +137,33 @@ func GetMemberByID(id int) (*models.Member, error) {
 	return &member, nil
 }
 
+// GetMemberProfileData 查詢會員的個人資料（僅基本資訊）
+func GetMemberProfileData(memberID int) (*models.Member, error) {
+	var member models.Member
+	if err := database.DB.First(&member, memberID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			log.Printf("Member with ID %d not found", memberID)
+			return nil, nil
+		}
+		log.Printf("Failed to get member by ID %d: %v", memberID, err)
+		return nil, fmt.Errorf("failed to get member by ID %d: %w", memberID, err)
+	}
+
+	// 解密 payment_info
+	if member.PaymentInfo != "" {
+		decryptedPaymentInfo, err := utils.DecryptPaymentInfo(member.PaymentInfo)
+		if err != nil {
+			log.Printf("Failed to decrypt payment_info for member %d: %v", memberID, err)
+			member.PaymentInfo = ""
+		} else {
+			member.PaymentInfo = decryptedPaymentInfo
+		}
+	}
+
+	log.Printf("Successfully retrieved member profile with ID %d", memberID)
+	return &member, nil
+}
+
 // GetAllMembers 查詢所有會員
 func GetAllMembers() ([]models.Member, error) {
 	var members []models.Member

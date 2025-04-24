@@ -211,11 +211,14 @@ func Path(router *gin.RouterGroup) {
 			membersWithAuth := members.Group("")
 			membersWithAuth.Use(AuthMiddleware())
 			{
+				// 查看個人資料：任何已認證的用戶都可以訪問
+				membersWithAuth.GET("/profile", handlers.GetMemberProfile)
 				// 管理員專屬路由
-				membersWithAuth.GET("/all", RoleMiddleware("admin"), handlers.GetAllMembers)   // 查詢所有會員
-				membersWithAuth.GET("/:id", RoleMiddleware("admin"), handlers.GetMember)       // 查詢特定會員
-				membersWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateMember)    // 更新會員資料
-				membersWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteMember) // 刪除會員
+				membersWithAuth.GET("/all", RoleMiddleware("admin"), handlers.GetAllMembers)                // 查詢所有會員
+				membersWithAuth.GET("/:id", RoleMiddleware("admin"), handlers.GetMember)                    // 查詢特定會員
+				membersWithAuth.GET("/:id/history", RoleMiddleware("admin"), handlers.GetMemberRentHistory) // 查詢特定會員的租賃歷史記錄
+				membersWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateMember)                 // 更新會員資料
+				membersWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteMember)              // 刪除會員
 			}
 		}
 
@@ -233,8 +236,12 @@ func Path(router *gin.RouterGroup) {
 				parkingWithAuth.GET("/available", RoleMiddleware("renter", "shared_owner"), handlers.GetAvailableParkingSpots)
 				// 查詢特定車位：renter 和 shared_owner 都可以訪問
 				parkingWithAuth.GET("/:id", RoleMiddleware("renter", "shared_owner"), handlers.GetParkingSpot)
+				// 更新車位：僅 shared_owner 和 admin 可以操作
+				parkingWithAuth.PUT("/:id", RoleMiddleware("shared_owner", "admin"), handlers.UpdateParkingSpot)
 				// 查看車位收入：shared_owner 和 admin 都可以訪問
 				parkingWithAuth.GET("/:id/income", RoleMiddleware("shared_owner", "admin"), handlers.GetParkingSpotIncome)
+				// 刪除車位：僅 shared_owner 和 admin 可以操作
+				parkingWithAuth.DELETE("/:id", RoleMiddleware("shared_owner", "admin"), handlers.DeleteParkingSpot)
 			}
 		}
 

@@ -12,6 +12,7 @@ type Rent struct {
 	EndTime       time.Time   `json:"end_time" gorm:"type:datetime;not null" binding:"required"`
 	ActualEndTime *time.Time  `json:"actual_end_time" gorm:"type:datetime"`
 	TotalCost     float64     `json:"total_cost" gorm:"type:decimal(10,2);default:0.00"`
+	Status        string      `json:"status" gorm:"type:enum('pending', 'reserved', 'completed', 'canceled');default:'pending'"` // 使用 ENUM
 	Member        Member      `json:"-" gorm:"foreignKey:MemberID;references:MemberID"`
 	ParkingSpot   ParkingSpot `json:"-" gorm:"foreignKey:SpotID;references:SpotID"`
 }
@@ -28,6 +29,7 @@ type RentResponse struct {
 	EndTime       time.Time           `json:"end_time"`
 	ActualEndTime *time.Time          `json:"actual_end_time"`
 	TotalCost     float64             `json:"total_cost"`
+	Status        string              `json:"status"` // 包含 Status 欄位
 	Member        MemberResponse      `json:"member"`
 	ParkingSpot   ParkingSpotResponse `json:"parking_spot"`
 }
@@ -40,6 +42,7 @@ type SimpleRentResponse struct {
 	EndTime       time.Time  `json:"end_time"`
 	ActualEndTime *time.Time `json:"actual_end_time"`
 	TotalCost     float64    `json:"total_cost"`
+	Status        string     `json:"status"` // 包含 Status 欄位
 }
 
 func (r *Rent) ToResponse(availableDays []ParkingSpotAvailableDay, parkingSpotRents []Rent) RentResponse {
@@ -51,6 +54,7 @@ func (r *Rent) ToResponse(availableDays []ParkingSpotAvailableDay, parkingSpotRe
 		EndTime:       r.EndTime,
 		ActualEndTime: r.ActualEndTime,
 		TotalCost:     r.TotalCost,
+		Status:        r.Status,
 		Member:        r.Member.ToResponse(),
 		ParkingSpot:   r.ParkingSpot.ToResponse(availableDays, parkingSpotRents),
 	}
@@ -65,5 +69,6 @@ func (r *Rent) ToSimpleResponse() SimpleRentResponse {
 		EndTime:       r.EndTime,
 		ActualEndTime: r.ActualEndTime,
 		TotalCost:     r.TotalCost,
+		Status:        r.Status,
 	}
 }

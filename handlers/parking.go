@@ -213,12 +213,19 @@ func GetAvailableParkingSpots(c *gin.Context) {
 	for i, spot := range parkingSpots {
 		// 確保每個車位都有可用日期記錄
 		spot.AvailableDays = availableDaysList[i]
-		if len(spot.AvailableDays) > 0 {
+		hasMatchingDate := false
+		for _, day := range spot.AvailableDays {
+			if day.AvailableDate.Format("2006-01-02") == dateStr && day.IsAvailable {
+				hasMatchingDate = true
+				break
+			}
+		}
+		if hasMatchingDate {
 			availableSpots = append(availableSpots, spot)
 			log.Printf("Spot %d included in available spots", spot.SpotID)
 		} else {
 			unavailableSpots = append(unavailableSpots, spot.SpotID)
-			log.Printf("Spot %d excluded: No available days for date %s", spot.SpotID, dateStr)
+			log.Printf("Spot %d excluded: Not available on date %s", spot.SpotID, dateStr)
 		}
 	}
 

@@ -586,7 +586,7 @@ func GetRentByID(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
-		log.Printf("Invalid rent ID: %v", err)
+		log.Printf("Invalid rent ID: id=%s, error=%v", idStr, err)
 		ErrorResponse(c, http.StatusBadRequest, "無效的租用ID", err.Error())
 		return
 	}
@@ -603,22 +603,27 @@ func GetRentByID(c *gin.Context) {
 		return
 	}
 
-	var rent models.Rent
-	if err := database.DB.Where("rent_id = ? AND member_id = ?", id, currentMemberIDInt).First(&rent).Error; err != nil {
-		log.Printf("Failed to get rent: %v", err)
-		ErrorResponse(c, http.StatusNotFound, "租賃記錄不存在", "rent record not found")
+	role, exists := c.Get("role")
+	if !exists {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "role not found in token")
+		return
+	}
+	roleStr, ok := role.(string)
+	if !ok {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid role type")
 		return
 	}
 
-	availableDays, err := services.FetchAvailableDays(rent.SpotID)
+	rent, availableDays, err := services.GetRentByID(id, currentMemberIDInt, roleStr)
 	if err != nil {
-		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
-		availableDays = []models.ParkingSpotAvailableDay{}
+		log.Printf("Failed to get rent: rent_id=%d, member_id=%d, error=%v", id, currentMemberIDInt, err)
+		ErrorResponse(c, http.StatusNotFound, "租賃記錄不存在或無權訪問", err.Error())
+		return
 	}
 
 	var parkingSpotRents []models.Rent
 	if err := database.DB.Where("spot_id = ?", rent.SpotID).Find(&parkingSpotRents).Error; err != nil {
-		log.Printf("Failed to fetch rents for spot %d: %v", rent.SpotID, err)
+		log.Printf("Failed to fetch rents: spot_id=%d, error=%v", rent.SpotID, err)
 		parkingSpotRents = []models.Rent{}
 	}
 

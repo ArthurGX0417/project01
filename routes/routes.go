@@ -167,6 +167,12 @@ func RoleMiddleware(allowedRoles ...string) gin.HandlerFunc {
 			return
 		}
 
+		// 允許 admin 角色訪問所有端點
+		if roleStr == "admin" {
+			c.Next()
+			return
+		}
+
 		allowed := false
 		for _, allowedRole := range allowedRoles {
 			if roleStr == allowedRole {
@@ -233,7 +239,7 @@ func Path(router *gin.RouterGroup) {
 				// 共享車位：僅 shared_owner 和 admin 可以操作
 				parkingWithAuth.POST("/share", RoleMiddleware("shared_owner", "admin"), handlers.ShareParkingSpot)
 				// 查詢可用車位：renter 和 shared_owner 都可以訪問
-				parkingWithAuth.GET("/available", RoleMiddleware("renter", "shared_owner"), handlers.GetAvailableParkingSpots)
+				parkingWithAuth.GET("/available", RoleMiddleware("renter", "shared_owner", "admin"), handlers.GetAvailableParkingSpots)
 				// 查詢特定車位：renter 和 shared_owner 都可以訪問
 				parkingWithAuth.GET("/:id", RoleMiddleware("renter", "shared_owner"), handlers.GetParkingSpot)
 				// 查看車位收入：shared_owner 和 admin 都可以訪問

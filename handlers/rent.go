@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"math"
 	"net/http"
@@ -16,9 +17,28 @@ import (
 
 // RentInput 定義用於綁定請求的輸入結構體
 type RentInput struct {
-	SpotID    int       `json:"spot_id" binding:"required"`
-	StartTime time.Time `json:"start_time" binding:"required"`
-	EndTime   time.Time `json:"end_time" binding:"required"`
+	SpotID    int    `json:"spot_id" binding:"required"`
+	StartTime string `json:"start_time" binding:"required"` // 改為字符串
+	EndTime   string `json:"end_time" binding:"required"`   // 改為字符串
+}
+
+// parseTimeWithUTC 解析時間字符串並假設為 UTC
+func parseTimeWithUTC(timeStr string) (time.Time, error) {
+	// 嘗試解析不帶時區的格式
+	t, err := time.Parse("2006-01-02T15:04:05", timeStr)
+	if err == nil {
+		// 假設默認時區為 UTC
+		return t.UTC(), nil
+	}
+
+	// 如果不帶時區的格式解析失敗，嘗試 RFC 3339 格式
+	t, err = time.Parse(time.RFC3339, timeStr)
+	if err == nil {
+		// 已經包含時區，直接轉為 UTC
+		return t.UTC(), nil
+	}
+
+	return time.Time{}, fmt.Errorf("time must be in 'YYYY-MM-DDThh:mm:ss' or RFC 3339 format")
 }
 
 // RentParkingSpot 租車位資料檢查
@@ -31,6 +51,31 @@ func RentParkingSpot(c *gin.Context) {
 			"message": "無效的輸入資料",
 			"error":   "請提供車位 ID、開始時間和結束時間",
 			"code":    "ERR_INVALID_INPUT",
+		})
+		return
+	}
+
+	// 解析開始時間和結束時間
+	startTime, err := parseTimeWithUTC(input.StartTime)
+	if err != nil {
+		log.Printf("Failed to parse start_time %s: %v", input.StartTime, err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的開始時間格式",
+			"error":   err.Error(),
+			"code":    "ERR_INVALID_TIME_FORMAT",
+		})
+		return
+	}
+
+	endTime, err := parseTimeWithUTC(input.EndTime)
+	if err != nil {
+		log.Printf("Failed to parse end_time %s: %v", input.EndTime, err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的結束時間格式",
+			"error":   err.Error(),
+			"code":    "ERR_INVALID_TIME_FORMAT",
 		})
 		return
 	}
@@ -60,11 +105,11 @@ func RentParkingSpot(c *gin.Context) {
 	}
 
 	now := time.Now().UTC()
-	log.Printf("Current UTC time: %s, StartTime: %s", now.Format(time.RFC3339), input.StartTime.Format(time.RFC3339))
+	log.Printf("Current UTC time: %s, StartTime: %s", now.Format(time.RFC3339), startTime.Format(time.RFC3339))
 
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	if input.StartTime.Before(today) {
-		log.Printf("Start time %s is before today %s", input.StartTime.Format(time.RFC3339), today.Format(time.RFC3339))
+	if startTime.Before(today) {
+		log.Printf("Start time %s is before today %s", startTime.Format(time.RFC3339), today.Format(time.RFC3339))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "開始時間必須在今天或未來",
@@ -74,8 +119,8 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	if !input.EndTime.After(input.StartTime) {
-		log.Printf("End time %s is not after start time %s", input.EndTime.Format(time.RFC3339), input.StartTime.Format(time.RFC3339))
+	if !endTime.After(startTime) {
+		log.Printf("End time %s is not after start time %s", endTime.Format(time.RFC3339), startTime.Format(time.RFC3339))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "結束時間必須晚於開始時間",
@@ -133,8 +178,8 @@ func RentParkingSpot(c *gin.Context) {
 			return
 		}
 		// 檢查時間重疊（包括已結束的租賃）
-		if (input.StartTime.Before(rent.EndTime) || input.StartTime.Equal(rent.EndTime)) &&
-			(input.EndTime.After(rent.StartTime) || input.EndTime.Equal(rent.StartTime)) {
+		if (startTime.Before(rent.EndTime) || startTime.Equal(rent.EndTime)) &&
+			(endTime.After(rent.StartTime) || endTime.Equal(rent.StartTime)) {
 			log.Printf("New rent time range overlaps with existing rent for spot %d: rent_id %d", input.SpotID, rent.RentID)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  false,
@@ -148,7 +193,7 @@ func RentParkingSpot(c *gin.Context) {
 
 	// 自動更新車位狀態
 	var isDayAvailable bool
-	startDate := input.StartTime.Format("2006-01-02")
+	startDate := startTime.Format("2006-01-02")
 	var availableDayCount int64
 	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}).
 		Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", input.SpotID, startDate, true).
@@ -205,9 +250,9 @@ func RentParkingSpot(c *gin.Context) {
 	rent := &models.Rent{
 		MemberID:  currentMemberIDInt,
 		SpotID:    input.SpotID,
-		StartTime: input.StartTime,
-		EndTime:   input.EndTime,
-		Status:    "pending", // 添加這一行
+		StartTime: startTime,
+		EndTime:   endTime,
+		Status:    "pending",
 	}
 
 	if err := services.RentParkingSpot(rent); err != nil {
@@ -356,7 +401,7 @@ func CancelRent(c *gin.Context) {
 	// 檢查是否有其他未結束的租賃或預約
 	var activeRentCount int64
 	if err := database.DB.Model(&models.Rent{}).
-		Where("spot_id = ? AND status IN (?, ?) AND end_time >= ?", rent.SpotID, "pending", "reserved", time.Now()).
+		Where("spot_id = ? AND status IN (?, ?) AND end_time >= ?", rent.SpotID, "pending", "reserved", time.Now().UTC()).
 		Count(&activeRentCount).Error; err != nil {
 		log.Printf("Failed to check active rents for spot %d: %v", rent.SpotID, err)
 		activeRentCount = 0
@@ -364,7 +409,7 @@ func CancelRent(c *gin.Context) {
 
 	// 檢查當天的可用性
 	var isDayAvailable bool
-	todayStr := time.Now().Format("2006-01-02")
+	todayStr := time.Now().UTC().Format("2006-01-02")
 	var availableDayCount int64
 	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}).
 		Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", rent.SpotID, todayStr, true).
@@ -455,13 +500,13 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	leaveTime, err := time.Parse(time.RFC3339, input.LeaveTime)
+	leaveTime, err := parseTimeWithUTC(input.LeaveTime)
 	if err != nil {
 		log.Printf("Invalid leave_time format: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無效的離開時間",
-			"error":   "leave_time must be in ISO 8601 format (e.g., 2025-04-11T12:30:00Z)",
+			"error":   "leave_time must be in 'YYYY-MM-DDThh:mm:ss' or RFC 3339 format",
 		})
 		return
 	}
@@ -518,14 +563,14 @@ func LeaveAndPay(c *gin.Context) {
 
 	var activeRentCount int64
 	if err := database.DB.Model(&models.Rent{}).
-		Where("spot_id = ? AND actual_end_time IS NULL AND end_time >= ?", rent.SpotID, time.Now()).
+		Where("spot_id = ? AND actual_end_time IS NULL AND end_time >= ?", rent.SpotID, time.Now().UTC()).
 		Count(&activeRentCount).Error; err != nil {
 		log.Printf("Failed to check active rents for spot %d: %v", rent.SpotID, err)
 		activeRentCount = 0
 	}
 
 	var isDayAvailable bool
-	todayStr := time.Now().Format("2006-01-02")
+	todayStr := time.Now().UTC().Format("2006-01-02")
 	var availableDayCount int64
 	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}).
 		Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", rent.SpotID, todayStr, true).
@@ -644,6 +689,31 @@ func ReserveParkingSpot(c *gin.Context) {
 		return
 	}
 
+	// 解析開始時間和結束時間
+	startTime, err := parseTimeWithUTC(input.StartTime)
+	if err != nil {
+		log.Printf("Failed to parse start_time %s: %v", input.StartTime, err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的開始時間格式",
+			"error":   err.Error(),
+			"code":    "ERR_INVALID_TIME_FORMAT",
+		})
+		return
+	}
+
+	endTime, err := parseTimeWithUTC(input.EndTime)
+	if err != nil {
+		log.Printf("Failed to parse end_time %s: %v", input.EndTime, err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的結束時間格式",
+			"error":   err.Error(),
+			"code":    "ERR_INVALID_TIME_FORMAT",
+		})
+		return
+	}
+
 	currentMemberID, exists := c.Get("member_id")
 	if !exists {
 		log.Printf("Failed to get member_id from context")
@@ -670,8 +740,8 @@ func ReserveParkingSpot(c *gin.Context) {
 
 	now := time.Now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	if input.StartTime.Before(today) {
-		log.Printf("Reservation start time %s is before today %s", input.StartTime.Format(time.RFC3339), today.Format(time.RFC3339))
+	if startTime.Before(today) {
+		log.Printf("Reservation start time %s is before today %s", startTime.Format(time.RFC3339), today.Format(time.RFC3339))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "開始時間必須在今天或未來",
@@ -681,8 +751,8 @@ func ReserveParkingSpot(c *gin.Context) {
 		return
 	}
 
-	if !input.EndTime.After(input.StartTime) {
-		log.Printf("Reservation end time %s is not after start time %s", input.EndTime.Format(time.RFC3339), input.StartTime.Format(time.RFC3339))
+	if !endTime.After(startTime) {
+		log.Printf("Reservation end time %s is not after start time %s", endTime.Format(time.RFC3339), startTime.Format(time.RFC3339))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "結束時間必須晚於開始時間",
@@ -706,8 +776,8 @@ func ReserveParkingSpot(c *gin.Context) {
 
 	// 檢查是否有現有租賃或預約與請求的時間範圍重疊
 	for _, rent := range parkingSpot.Rents {
-		if (input.StartTime.Before(rent.EndTime) || input.StartTime.Equal(rent.EndTime)) &&
-			(input.EndTime.After(rent.StartTime) || input.EndTime.Equal(rent.StartTime)) {
+		if (startTime.Before(rent.EndTime) || startTime.Equal(rent.EndTime)) &&
+			(endTime.After(rent.StartTime) || endTime.Equal(rent.StartTime)) {
 			log.Printf("Reservation time range overlaps with existing rent for spot %d: rent_id %d", input.SpotID, rent.RentID)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  false,
@@ -720,7 +790,7 @@ func ReserveParkingSpot(c *gin.Context) {
 	}
 
 	// 檢查車位在指定日期是否可用
-	startDate := input.StartTime.Format("2006-01-02")
+	startDate := startTime.Format("2006-01-02")
 	var availableDayCount int64
 	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}).
 		Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", input.SpotID, startDate, true).
@@ -750,8 +820,8 @@ func ReserveParkingSpot(c *gin.Context) {
 	reservation := &models.Rent{
 		MemberID:  currentMemberIDInt,
 		SpotID:    input.SpotID,
-		StartTime: input.StartTime,
-		EndTime:   input.EndTime,
+		StartTime: startTime,
+		EndTime:   endTime,
 		Status:    "reserved", // 表示這是一筆預約記錄
 	}
 

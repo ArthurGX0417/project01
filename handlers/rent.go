@@ -501,7 +501,7 @@ func LeaveAndPay(c *gin.Context) {
 	}
 
 	var input struct {
-		LeaveTime string `json:"leave_time" binding:"required"`
+		ActualEndTime string `json:"actual_end_time" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Printf("Invalid input: %v", err)
@@ -513,19 +513,19 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	leaveTime, err := parseTimeWithUTC(input.LeaveTime)
+	actualEndTime, err := parseTimeWithUTC(input.ActualEndTime)
 	if err != nil {
-		log.Printf("Invalid leave_time format: %v", err)
+		log.Printf("Invalid actual_end_time format: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無效的離開時間",
-			"error":   "leave_time must be in 'YYYY-MM-DDThh:mm:ss' or RFC 3339 format",
+			"error":   "actual_end_time must be in 'YYYY-MM-DDThh:mm:ss' or RFC 3339 format",
 		})
 		return
 	}
 
-	if leaveTime.Before(rent.StartTime) {
-		log.Printf("Leave time %v is before start time %v for rent ID %d", leaveTime, rent.StartTime, id)
+	if actualEndTime.Before(rent.StartTime) {
+		log.Printf("Actual end time %v is before start time %v for rent ID %d", actualEndTime, rent.StartTime, id)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無效的離開時間",
@@ -536,7 +536,7 @@ func LeaveAndPay(c *gin.Context) {
 
 	// 計算費用
 	var totalCost float64
-	durationMinutes := leaveTime.Sub(rent.StartTime).Minutes()
+	durationMinutes := actualEndTime.Sub(rent.StartTime).Minutes()
 	durationDays := durationMinutes / (24 * 60)
 
 	// 檢查是否在 5 分鐘內，若是則免費
@@ -560,7 +560,7 @@ func LeaveAndPay(c *gin.Context) {
 		}
 	}
 
-	rent.ActualEndTime = &leaveTime
+	rent.ActualEndTime = &actualEndTime
 	rent.TotalCost = totalCost
 	rent.Status = "completed" // 當租賃結算完成時
 

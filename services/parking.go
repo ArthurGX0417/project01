@@ -123,7 +123,7 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 	return nil
 }
 
-// GetAvailableParkingSpots 查詢可用停車位，基於日期和經緯度
+// GetAvailableParkingSpots 查詢可用車位，基於日期和經緯度
 func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) ([]models.ParkingSpot, [][]models.ParkingSpotAvailableDay, error) {
 	var spots []models.ParkingSpot
 

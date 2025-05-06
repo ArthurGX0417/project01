@@ -1,6 +1,7 @@
 package models
 
 import (
+	"log"
 	"time"
 )
 
@@ -62,6 +63,10 @@ func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay, rents 
 	for i, day := range availableDays {
 		days[i] = day.ToResponse()
 	}
+
+	// 添加日誌檢查價格值
+	log.Printf("Converting ParkingSpot %d to response: PricePerHalfHour=%.2f, DailyMaxPrice=%.2f, MonthlyPrice=%.2f",
+		p.SpotID, p.PricePerHalfHour, p.DailyMaxPrice, p.MonthlyPrice)
 
 	return ParkingSpotResponse{
 		SpotID:           p.SpotID,

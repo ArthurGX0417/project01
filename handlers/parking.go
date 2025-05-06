@@ -111,6 +111,7 @@ func ShareParkingSpot(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "車位共享成功", refreshedSpot.ToResponse(availableDaysFetched, rents))
 }
 
+// GetAvailableParkingSpots 查詢可用車位
 func GetAvailableParkingSpots(c *gin.Context) {
 	// 獲取查詢參數
 	dateStr := c.Query("date")

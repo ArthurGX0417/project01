@@ -33,6 +33,15 @@ type ParkingSpotInput struct {
 	AvailableDays    []AvailableDayInput `json:"available_days" binding:"omitempty,dive"`
 }
 
+// RentIncomeResponse 定義給前端的租賃記錄回應結構
+type RentIncomeResponse struct {
+	RentID    int     `json:"rent_id"`
+	SpotID    int     `json:"spot_id"`
+	StartTime string  `json:"start_time"` // 格式化為 "YYYY-MM-DD HH:mm:ss"
+	EndTime   string  `json:"end_time"`   // 格式化為 "YYYY-MM-DD HH:mm:ss"
+	TotalCost float64 `json:"total_cost"`
+}
+
 func ShareParkingSpot(c *gin.Context) {
 	var input ParkingSpotInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -464,7 +473,7 @@ func GetParkingSpotIncome(c *gin.Context) {
 	log.Printf("Authenticated member - member_id: %d, role: %s", currentMemberIDInt, currentRoleStr)
 
 	// 調用 services 層計算收入，傳遞角色
-	totalIncome, spot, err := services.GetParkingSpotIncome(id, startDate, endDate, currentMemberIDInt, currentRoleStr)
+	totalIncome, spot, rents, err := services.GetParkingSpotIncome(id, startDate, endDate, currentMemberIDInt, currentRoleStr)
 	if err != nil {
 		log.Printf("Failed to get parking spot income: %v", err)
 		if strings.Contains(err.Error(), "parking spot not found") {
@@ -479,13 +488,26 @@ func GetParkingSpotIncome(c *gin.Context) {
 		return
 	}
 
-	// 返回收入數據
+	// 將 rents 映射到 RentIncomeResponse，格式化時間字段
+	rentResponses := make([]RentIncomeResponse, len(rents))
+	for i, rent := range rents {
+		rentResponses[i] = RentIncomeResponse{
+			RentID:    rent.RentID,
+			SpotID:    rent.SpotID,
+			StartTime: rent.StartTime.Format("2006-01-02 15:04:05"), // 格式化為 YYYY-MM-DD HH:mm:ss
+			EndTime:   rent.EndTime.Format("2006-01-02 15:04:05"),   // 格式化為 YYYY-MM-DD HH:mm:ss
+			TotalCost: rent.TotalCost,
+		}
+	}
+
+	// 構造回應，包含租賃記錄
 	response := gin.H{
 		"spot_id":      spot.SpotID,
 		"location":     spot.Location,
 		"start_date":   startDateStr,
 		"end_date":     endDateStr,
 		"total_income": totalIncome,
+		"rents":        rentResponses,
 	}
 
 	log.Printf("Sending response: %v", response)

@@ -436,43 +436,50 @@ type AvailableDayInput struct {
 	IsAvailable bool   `json:"is_available"`
 }
 
-// GetParkingSpotIncome 計算指定車位在指定時間範圍內的收入
-func GetParkingSpotIncome(spotID int, startDate, endDate time.Time, currentMemberID int, role string) (float64, *models.ParkingSpot, error) {
+// GetParkingSpotIncome 計算指定車位在指定時間範圍內的收入，並返回相關租賃記錄
+func GetParkingSpotIncome(spotID int, startDate, endDate time.Time, currentMemberID int, role string) (float64, *models.ParkingSpot, []models.Rent, error) {
 	// 驗證角色
 	validRoles := map[string]bool{"admin": true, "shared_owner": true}
 	if !validRoles[role] {
 		log.Printf("Invalid role: %s", role)
-		return 0, nil, fmt.Errorf("invalid role: %s", role)
+		return 0, nil, nil, fmt.Errorf("invalid role: %s", role)
 	}
 
 	// 查詢車位
 	var spot models.ParkingSpot
 	if err := database.DB.First(&spot, spotID).Error; err != nil {
 		log.Printf("Failed to find parking spot %d: %v", spotID, err)
-		return 0, nil, fmt.Errorf("parking spot not found: %w", err)
+		return 0, nil, nil, fmt.Errorf("parking spot not found: %w", err)
 	}
 
 	// 檢查權限：admin 可以查看任何車位，shared_owner 只能查看自己的車位
 	if role != "admin" {
 		if spot.MemberID != currentMemberID {
 			log.Printf("Permission denied: member %d (role: %s) is not the owner of spot %d (owned by member %d)", currentMemberID, role, spot.SpotID, spot.MemberID)
-			return 0, nil, fmt.Errorf("permission denied: you can only view income of your own parking spot")
+			return 0, nil, nil, fmt.Errorf("permission denied: you can only view income of your own parking spot")
 		}
 	}
 	log.Printf("Permission granted: member %d (role: %s) can view income of spot %d", currentMemberID, role, spot.SpotID)
 
-	// 直接在資料庫層計算總收入
+	// 查詢符合時間範圍的租賃記錄
+	var rents []models.Rent
+	if err := database.DB.Where("spot_id = ? AND start_time >= ? AND start_time <= ? AND total_cost > 0", spotID, startDate, endDate).Find(&rents).Error; err != nil {
+		log.Printf("Failed to fetch rents for spot %d: %v", spotID, err)
+		return 0, nil, nil, fmt.Errorf("failed to fetch rents: %w", err)
+	}
+
+	// 計算總收入
 	var totalIncome float64
 	if err := database.DB.Model(&models.Rent{}).
 		Where("spot_id = ? AND start_time >= ? AND start_time <= ? AND total_cost > 0", spotID, startDate, endDate).
 		Select("COALESCE(SUM(total_cost), 0)").
 		Scan(&totalIncome).Error; err != nil {
 		log.Printf("Failed to calculate income for spot %d: %v", spotID, err)
-		return 0, nil, fmt.Errorf("failed to calculate income: %w", err)
+		return 0, nil, nil, fmt.Errorf("failed to calculate income: %w", err)
 	}
 
-	log.Printf("Calculated total income for spot %d: %.2f", spot.SpotID, totalIncome)
-	return totalIncome, &spot, nil
+	log.Printf("Calculated total income for spot %d: %.2f, found %d rents", spot.SpotID, totalIncome, len(rents))
+	return totalIncome, &spot, rents, nil
 }
 
 func DeleteParkingSpot(spotID int, currentMemberID int, role string) error {

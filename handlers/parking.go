@@ -35,11 +35,11 @@ type ParkingSpotInput struct {
 
 // RentIncomeResponse 定義給前端的租賃記錄回應結構
 type RentIncomeResponse struct {
-	RentID    int     `json:"rent_id"`
-	SpotID    int     `json:"spot_id"`
-	StartTime string  `json:"start_time"` // 格式化為 "YYYY-MM-DD HH:mm:ss"
-	EndTime   string  `json:"end_time"`   // 格式化為 "YYYY-MM-DD HH:mm:ss"
-	TotalCost float64 `json:"total_cost"`
+	RentID        int     `json:"rent_id"`
+	SpotID        int     `json:"spot_id"`
+	StartTime     string  `json:"start_time"`      // 格式化為 "YYYY-MM-DD HH:mm:ss"
+	ActualEndTime *string `json:"actual_end_time"` // 格式化為 "YYYY-MM-DD HH:mm:ss"，可為 null
+	TotalCost     float64 `json:"total_cost"`
 }
 
 func ShareParkingSpot(c *gin.Context) {
@@ -491,12 +491,18 @@ func GetParkingSpotIncome(c *gin.Context) {
 	// 將 rents 映射到 RentIncomeResponse，格式化時間字段
 	rentResponses := make([]RentIncomeResponse, len(rents))
 	for i, rent := range rents {
+		var actualEndTime *string
+		if rent.ActualEndTime != nil {
+			formattedTime := rent.ActualEndTime.Format("2006-01-02 15:04:05")
+			actualEndTime = &formattedTime
+		}
+
 		rentResponses[i] = RentIncomeResponse{
-			RentID:    rent.RentID,
-			SpotID:    rent.SpotID,
-			StartTime: rent.StartTime.Format("2006-01-02 15:04:05"), // 格式化為 YYYY-MM-DD HH:mm:ss
-			EndTime:   rent.EndTime.Format("2006-01-02 15:04:05"),   // 格式化為 YYYY-MM-DD HH:mm:ss
-			TotalCost: rent.TotalCost,
+			RentID:        rent.RentID,
+			SpotID:        rent.SpotID,
+			StartTime:     rent.StartTime.Format("2006-01-02 15:04:05"), // 格式化為 YYYY-MM-DD HH:mm:ss
+			ActualEndTime: actualEndTime,                                // 格式化為 YYYY-MM-DD HH:mm:ss 或 null
+			TotalCost:     rent.TotalCost,
 		}
 	}
 

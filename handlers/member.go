@@ -260,45 +260,6 @@ func DeleteMember(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "刪除成功", nil)
 }
 
-// GetMemberRentHistory 查詢特定會員的租賃歷史記錄
-func GetMemberRentHistory(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		log.Printf("Invalid member ID: %v", err)
-		ErrorResponse(c, http.StatusBadRequest, "無效的會員ID", "member ID must be a number", "ERR_INVALID_MEMBER_ID")
-		return
-	}
-
-	// 檢查會員是否存在
-	member, err := services.GetMemberByID(id)
-	if err != nil {
-		log.Printf("Failed to get member: %v", err)
-		ErrorResponse(c, http.StatusInternalServerError, "查詢會員失敗", err.Error(), "ERR_INTERNAL_SERVER")
-		return
-	}
-	if member == nil {
-		ErrorResponse(c, http.StatusNotFound, "會員不存在", "member not found", "ERR_MEMBER_NOT_FOUND")
-		return
-	}
-
-	// 查詢租賃歷史
-	rents, err := services.GetMemberRentHistory(id)
-	if err != nil {
-		log.Printf("Failed to get rent history for member %d: %v", id, err)
-		ErrorResponse(c, http.StatusInternalServerError, "查詢租賃歷史失敗", err.Error(), "ERR_INTERNAL_SERVER")
-		return
-	}
-
-	// 轉換為 RentResponse
-	rentResponses := make([]models.RentResponse, len(rents))
-	for i, rent := range rents {
-		rentResponses[i] = rent.ToResponse([]models.ParkingSpotAvailableDay{}, []models.Rent{})
-	}
-
-	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)
-}
-
 // GetMemberProfile 查看個人資料
 func GetMemberProfile(c *gin.Context) {
 	currentMemberID, exists := c.Get("member_id")

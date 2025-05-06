@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"project01/handlers"
 	"project01/utils"
+	"strconv"
 	"strings"
 	"time"
 
@@ -196,6 +197,86 @@ func RoleMiddleware(allowedRoles ...string) gin.HandlerFunc {
 	}
 }
 
+// MemberRentHistoryMiddleware 檢查會員是否有權訪問租賃歷史
+func MemberRentHistoryMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		currentMemberID, exists := c.Get("member_id")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "未授權",
+				"error":   "member_id not found in token",
+				"code":    "ERR_NO_MEMBER_ID",
+			})
+			c.Abort()
+			return
+		}
+
+		currentMemberIDInt, ok := currentMemberID.(int)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "未授權",
+				"error":   "invalid member_id type",
+				"code":    "ERR_INVALID_MEMBER_ID",
+			})
+			c.Abort()
+			return
+		}
+
+		role, exists := c.Get("role")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "未授權",
+				"error":   "role not found in token",
+				"code":    "ERR_NO_ROLE",
+			})
+			c.Abort()
+			return
+		}
+
+		roleStr, ok := role.(string)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "未授權",
+				"error":   "invalid role type",
+				"code":    "ERR_INVALID_ROLE",
+			})
+			c.Abort()
+			return
+		}
+
+		requestedMemberIDStr := c.Param("id")
+		requestedMemberID, err := strconv.Atoi(requestedMemberIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  false,
+				"message": "無效的會員 ID",
+				"error":   err.Error(),
+				"code":    "ERR_INVALID_ID",
+			})
+			c.Abort()
+			return
+		}
+
+		// 權限檢查
+		if roleStr != "admin" && currentMemberIDInt != requestedMemberID {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  false,
+				"message": "無權限",
+				"error":   "you can only view your own rent history",
+				"code":    "ERR_INSUFFICIENT_PERMISSIONS",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
 func Path(router *gin.RouterGroup) {
 	// 版本控制
 	v1 := router.Group("/v1")
@@ -220,11 +301,11 @@ func Path(router *gin.RouterGroup) {
 				// 查看個人資料：任何已認證的用戶都可以訪問
 				membersWithAuth.GET("/profile", handlers.GetMemberProfile)
 				// 管理員專屬路由
-				membersWithAuth.GET("/all", RoleMiddleware("admin"), handlers.GetAllMembers)                // 查詢所有會員
-				membersWithAuth.GET("/:id", RoleMiddleware("admin"), handlers.GetMember)                    // 查詢特定會員
-				membersWithAuth.GET("/:id/history", RoleMiddleware("admin"), handlers.GetMemberRentHistory) // 查詢特定會員的租賃歷史記錄
-				membersWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateMember)                 // 更新會員資料
-				membersWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteMember)              // 刪除會員
+				membersWithAuth.GET("/all", RoleMiddleware("admin"), handlers.GetAllMembers)                      // 查詢所有會員
+				membersWithAuth.GET("/:id", RoleMiddleware("admin"), handlers.GetMember)                          // 查詢特定會員
+				membersWithAuth.GET("/:id/history", MemberRentHistoryMiddleware(), handlers.GetMemberRentHistory) // 查詢特定會員的租賃歷史記錄
+				membersWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateMember)                       // 更新會員資料
+				membersWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteMember)                    // 刪除會員
 			}
 		}
 
@@ -260,8 +341,8 @@ func Path(router *gin.RouterGroup) {
 			{
 				// 租用車位：renter 和 shared_owner 都可以操作
 				rentWithAuth.POST("", RoleMiddleware("renter", "shared_owner"), handlers.RentParkingSpot)
-				// 預約車位：renter 和 shared_owner 都可以操作
-				rentWithAuth.POST("/reserve", RoleMiddleware("renter", "shared_owner"), handlers.ReserveParkingSpot)
+				// 預約車位：僅 renter 可以操作
+				rentWithAuth.POST("/reserve", RoleMiddleware("renter"), handlers.ReserveParkingSpot)
 				// 確認預約：僅 renter 可以操作
 				rentWithAuth.POST("/:id/confirm", RoleMiddleware("renter"), handlers.ConfirmReservation)
 				// 離開結算：renter 和 shared_owner 都可以操作

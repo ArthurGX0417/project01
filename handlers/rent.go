@@ -507,7 +507,6 @@ func ReserveParkingSpot(c *gin.Context) {
 	})
 }
 
-// 以下函數保持不變
 // GetRentRecords 查詢租用紀錄資料檢查
 func GetRentRecords(c *gin.Context) {
 	currentMemberID, exists := c.Get("member_id")
@@ -537,6 +536,98 @@ func GetRentRecords(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)
 }
 
+// GetMemberRentHistory 查詢特定會員的租賃歷史記錄
+func GetMemberRentHistory(c *gin.Context) {
+	requestedMemberIDStr := c.Param("id")
+	requestedMemberID, err := strconv.Atoi(requestedMemberIDStr)
+	if err != nil {
+		log.Printf("Invalid member ID: %v", err)
+		ErrorResponse(c, http.StatusBadRequest, "無效的會員 ID", err.Error())
+		return
+	}
+
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token")
+		return
+	}
+
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type")
+		return
+	}
+
+	role, exists := c.Get("role")
+	if !exists {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "role not found in token")
+		return
+	}
+	roleStr, ok := role.(string)
+	if !ok {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid role type")
+		return
+	}
+
+	// 查詢會員是否存在
+	var member models.Member
+	if err := database.DB.First(&member, requestedMemberID).Error; err != nil {
+		log.Printf("Failed to find member: member_id=%d, error=%v", requestedMemberID, err)
+		ErrorResponse(c, http.StatusNotFound, "會員不存在", "member not found")
+		return
+	}
+
+	var rents []models.Rent
+	if roleStr == "shared_owner" {
+		// shared_owner：查詢自己車位的租賃記錄
+		if err := database.DB.
+			Preload("Member").
+			Preload("ParkingSpot").
+			Where("spot_id IN (SELECT spot_id FROM parking_spots WHERE member_id = ?)", currentMemberIDInt).
+			Find(&rents).Error; err != nil {
+			log.Printf("Failed to get rent records for shared_owner: member_id=%d, error=%v", currentMemberIDInt, err)
+			ErrorResponse(c, http.StatusInternalServerError, "查詢租用紀錄失敗", err.Error())
+			return
+		}
+	} else {
+		// renter 或 admin：查詢指定會員的租賃記錄
+		if roleStr != "admin" && currentMemberIDInt != requestedMemberID {
+			ErrorResponse(c, http.StatusForbidden, "無權限", "you can only view your own rent history")
+			return
+		}
+
+		if err := database.DB.
+			Preload("Member").
+			Preload("ParkingSpot").
+			Where("member_id = ?", requestedMemberID).
+			Find(&rents).Error; err != nil {
+			log.Printf("Failed to get rent records: member_id=%d, error=%v", requestedMemberID, err)
+			ErrorResponse(c, http.StatusInternalServerError, "查詢租用紀錄失敗", err.Error())
+			return
+		}
+	}
+
+	// 轉換為回應格式
+	rentResponses := make([]models.RentResponse, len(rents))
+	for i, rent := range rents {
+		availableDays, err := services.FetchAvailableDays(rent.SpotID)
+		if err != nil {
+			log.Printf("Failed to fetch available days: spot_id=%d, error=%v", rent.SpotID, err)
+			availableDays = []models.ParkingSpotAvailableDay{}
+		}
+
+		var parkingSpotRents []models.Rent
+		if err := database.DB.Where("spot_id = ?", rent.SpotID).Find(&parkingSpotRents).Error; err != nil {
+			log.Printf("Failed to fetch rents: spot_id=%d, error=%v", rent.SpotID, err)
+			parkingSpotRents = []models.Rent{}
+		}
+
+		rentResponses[i] = rent.ToResponse(availableDays, parkingSpotRents)
+	}
+
+	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)
+}
+
 // CancelRent 取消租用資料檢查
 func CancelRent(c *gin.Context) {
 	idStr := c.Param("id")
@@ -552,6 +643,50 @@ func CancelRent(c *gin.Context) {
 		return
 	}
 
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "member_id not found in token",
+			"code":    "ERR_NO_MEMBER_ID",
+		})
+		return
+	}
+
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "invalid member_id type",
+			"code":    "ERR_INVALID_MEMBER_ID",
+		})
+		return
+	}
+
+	role, exists := c.Get("role")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "role not found in token",
+			"code":    "ERR_NO_ROLE",
+		})
+		return
+	}
+
+	roleStr, ok := role.(string)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "invalid role type",
+			"code":    "ERR_INVALID_ROLE",
+		})
+		return
+	}
+
 	var rent models.Rent
 	if err := database.DB.Preload("ParkingSpot").First(&rent, id).Error; err != nil {
 		log.Printf("Failed to find rent ID %d: %v", id, err)
@@ -560,6 +695,18 @@ func CancelRent(c *gin.Context) {
 			"message": "租用記錄不存在",
 			"error":   "rent record not found",
 			"code":    "ERR_NOT_FOUND",
+		})
+		return
+	}
+
+	// 檢查權限：只有租賃的擁有者或 admin 能取消
+	if roleStr != "admin" && rent.MemberID != currentMemberIDInt {
+		log.Printf("Unauthorized attempt to cancel rent ID %d by member %d", id, currentMemberIDInt)
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  false,
+			"message": "無權限",
+			"error":   "you can only cancel your own rent",
+			"code":    "ERR_INSUFFICIENT_PERMISSIONS",
 		})
 		return
 	}

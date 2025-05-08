@@ -173,7 +173,7 @@ func GetAvailableParkingSpots(c *gin.Context) {
 	}
 
 	// 解析 radius 參數
-	radius := 0.0 // 預設值為 0，表示使用服務層的預設值（3 公里）
+	radius := 0.0
 	if radiusStr != "" {
 		radius, err = strconv.ParseFloat(radiusStr, 64)
 		if err != nil || radius < 0 {
@@ -187,7 +187,7 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		}
 	}
 
-	// 調用服務層函數，傳遞經緯度和 radius
+	// 調用服務層函數
 	parkingSpots, availableDaysList, err := services.GetAvailableParkingSpots(dateStr, latitude, longitude, radius)
 	if err != nil {
 		log.Printf("Failed to get parking spots: %v", err)
@@ -213,41 +213,21 @@ func GetAvailableParkingSpots(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Queried %d parking spots for date %s:", len(parkingSpots), dateStr)
-	for _, spot := range parkingSpots {
-		log.Printf("Spot %d: Status=%s, AvailableDays=%v", spot.SpotID, spot.Status, spot.AvailableDays)
-	}
-
 	var availableSpots []models.ParkingSpot
-	unavailableSpots := []int{}
+	seen := make(map[int]bool)
 	for i, spot := range parkingSpots {
-		// 確保每個車位都有可用日期記錄
 		spot.AvailableDays = availableDaysList[i]
-		availableSpots = append(availableSpots, spot)
-		log.Printf("Spot %d included in available spots with AvailableDays=%v", spot.SpotID, spot.AvailableDays)
-		hasMatchingDate := false
-		for _, day := range spot.AvailableDays {
-			if day.AvailableDate.Format("2006-01-02") == dateStr && day.IsAvailable {
-				hasMatchingDate = true
-				break
-			}
-		}
-		if hasMatchingDate {
+		if !seen[spot.SpotID] {
 			availableSpots = append(availableSpots, spot)
-			log.Printf("Spot %d included in available spots", spot.SpotID)
-		} else {
-			unavailableSpots = append(unavailableSpots, spot.SpotID)
-			log.Printf("Spot %d excluded: Not available on date %s", spot.SpotID, dateStr)
+			seen[spot.SpotID] = true
+			log.Printf("Spot %d included in available spots with AvailableDays=%v", spot.SpotID, spot.AvailableDays)
 		}
 	}
 
-	log.Printf("Found %d parking spots, %d available after filtering for date %s", len(parkingSpots), len(availableSpots), dateStr)
+	log.Printf("Found %d parking spots available for date %s", len(availableSpots), dateStr)
 
 	if len(availableSpots) == 0 {
 		message := fmt.Sprintf("所選條件（日期：%s，經緯度：%s, %s）目前沒有符合的車位！請調整篩選條件。", dateStr, latitudeStr, longitudeStr)
-		if len(unavailableSpots) > 0 {
-			message += fmt.Sprintf(" 以下車位未設定可用日期：%v", unavailableSpots)
-		}
 		c.JSON(http.StatusOK, gin.H{
 			"status":  false,
 			"message": message,

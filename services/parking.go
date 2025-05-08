@@ -163,6 +163,7 @@ func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) 
 	if err := database.DB.Model(&models.Rent{}).
 		Select("spot_id").
 		Where("(actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)", now, startOfDay, endOfDay).
+		Where("status NOT IN (?)", []string{"canceled"}). // 排除已取消的租約
 		Distinct().
 		Scan(&rentedSpotIDs).Error; err != nil {
 		log.Printf("Failed to query rented spot IDs: %v", err)
@@ -173,24 +174,10 @@ func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) 
 	query := database.DB.
 		Preload("Member").
 		Preload("Rents", "end_time >= ? OR actual_end_time IS NULL", now).
-		Joins("INNER JOIN parking_spot_available_day pad ON parking_spot.spot_id = pad.parking_spot_id").
-		Where("pad.is_available = ?", true)
-
-	// 添加日期過濾條件
-	if date != "" {
-		query = query.Where("pad.available_date = ?", date)
-	} else {
-		query = query.Where("pad.available_date = ?", time.Now().Format("2006-01-02"))
-	}
-
-	// 確保停車位狀態為 available
-	query = query.Where("parking_spot.status = ?", "available")
-
-	// 排除無效的經緯度 (0, 0)
-	query = query.Where("parking_spot.latitude != 0 AND parking_spot.longitude != 0")
-
-	// 添加距離過濾條件
-	query = query.Where(distanceSQL+" <= ?", latitude, longitude, latitude, radius)
+		Joins("LEFT JOIN parking_spot_available_day pad ON parking_spot.spot_id = pad.parking_spot_id AND pad.available_date = ? AND pad.is_available = ?", date, true).
+		Where("parking_spot.status = ?", "available").
+		Where("parking_spot.latitude != 0 AND parking_spot.longitude != 0").
+		Where(distanceSQL+" <= ?", latitude, longitude, latitude, radius)
 
 	// 添加租賃過濾條件
 	if len(rentedSpotIDs) > 0 {
@@ -217,7 +204,7 @@ func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) 
 
 	// 查詢可用日期
 	var availableDaysRecords []models.ParkingSpotAvailableDay
-	if err := database.DB.Where("parking_spot_id IN ? AND available_date >= ?", spotIDs, today).Find(&availableDaysRecords).Error; err != nil {
+	if err := database.DB.Where("parking_spot_id IN ? AND available_date = ? AND is_available = ?", spotIDs, date, true).Find(&availableDaysRecords).Error; err != nil {
 		log.Printf("Failed to fetch available days for spots: %v", err)
 		availableDaysRecords = []models.ParkingSpotAvailableDay{}
 	}

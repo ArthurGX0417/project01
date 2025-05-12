@@ -56,9 +56,6 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 	if spot.DailyMaxPrice == 0 && spot.PricingType == "hourly" {
 		spot.DailyMaxPrice = 300.00
 	}
-	if spot.MonthlyPrice == 0 && spot.PricingType == "monthly" {
-		spot.MonthlyPrice = 5000.00
-	}
 
 	// 檢查日期重複性和有效性
 	now := time.Now().UTC()

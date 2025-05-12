@@ -24,10 +24,9 @@ type ParkingSpotInput struct {
 	ParkingType      string              `json:"parking_type" binding:"required,oneof=mechanical flat"`
 	FloorLevel       string              `json:"floor_level" binding:"omitempty,max=20"`
 	Location         string              `json:"location" binding:"required,max=50"`
-	PricingType      string              `json:"pricing_type" binding:"required,oneof=monthly hourly"`
+	PricingType      string              `json:"pricing_type" binding:"required,oneof=hourly"` // 移除 monthly 選項
 	PricePerHalfHour float64             `json:"price_per_half_hour" binding:"gte=0"`
 	DailyMaxPrice    float64             `json:"daily_max_price" binding:"gte=0"`
-	MonthlyPrice     float64             `json:"monthly_price" binding:"gte=0"`
 	Longitude        float64             `json:"longitude" binding:"required,gte=-180,lte=180"`
 	Latitude         float64             `json:"latitude" binding:"required,gte=-90,lte=90"`
 	AvailableDays    []AvailableDayInput `json:"available_days" binding:"omitempty,dive"`
@@ -78,7 +77,6 @@ func ShareParkingSpot(c *gin.Context) {
 		PricingType:      input.PricingType,
 		PricePerHalfHour: input.PricePerHalfHour,
 		DailyMaxPrice:    input.DailyMaxPrice,
-		MonthlyPrice:     input.MonthlyPrice,
 		Longitude:        input.Longitude,
 		Latitude:         input.Latitude,
 		Status:           "available",

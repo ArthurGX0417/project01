@@ -69,19 +69,8 @@ func main() {
 	// 啟動定時任務
 	c := cron.New()
 
-	// 每月結算定時任務（每月 1 號 00:00 執行）
-	_, err := c.AddFunc("0 0 1 * *", func() {
-		log.Println("Running monthly settlement...")
-		if err := services.MonthlySettlement(); err != nil {
-			log.Printf("Monthly settlement failed: %v", err)
-		}
-	})
-	if err != nil {
-		log.Fatalf("Failed to schedule monthly settlement cron job: %v", err)
-	}
-
 	// 檢查預約超時定時任務（每 5 分鐘執行一次）
-	_, err = c.AddFunc("*/5 * * * *", func() {
+	_, err := c.AddFunc("*/5 * * * *", func() {
 		log.Println("Checking for expired reservations...")
 		if err := services.CheckExpiredReservations(); err != nil {
 			log.Printf("Failed to check expired reservations: %v", err)

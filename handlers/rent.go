@@ -130,27 +130,6 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	wifiVerified, err := services.VerifyWifi(currentMemberIDInt)
-	if err != nil {
-		log.Printf("Failed to verify WiFi for member %d: %v", currentMemberIDInt, err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  false,
-			"message": "WiFi 驗證失敗",
-			"error":   err.Error(),
-			"code":    "ERR_WIFI_VERIFICATION",
-		})
-		return
-	}
-	if !wifiVerified {
-		c.JSON(http.StatusForbidden, gin.H{
-			"status":  false,
-			"message": "請通過 WiFi 驗證以使用服務",
-			"error":   "WiFi verification required",
-			"code":    "ERR_WIFI_NOT_VERIFIED",
-		})
-		return
-	}
-
 	var parkingSpot models.ParkingSpot
 	if err := database.DB.Preload("Rents").First(&parkingSpot, input.SpotID).Error; err != nil {
 		log.Printf("Failed to find parking spot %d: %v", input.SpotID, err)
@@ -394,6 +373,7 @@ func ReserveParkingSpot(c *gin.Context) {
 		return
 	}
 
+	// 移除 WiFi 驗證相關代碼
 	var parkingSpot models.ParkingSpot
 	if err := database.DB.Preload("Rents").First(&parkingSpot, input.SpotID).Error; err != nil {
 		log.Printf("Failed to find parking spot %d: %v", input.SpotID, err)
@@ -877,21 +857,17 @@ func LeaveAndPay(c *gin.Context) {
 	if durationMinutes <= 5 {
 		totalCost = 0
 	} else {
-		if rent.ParkingSpot.PricingType == "monthly" {
-			months := math.Ceil(durationDays / 30)
-			totalCost = months * rent.ParkingSpot.MonthlyPrice
-		} else { // hourly
-			halfHours := math.Floor(durationMinutes / 30)
-			remainingMinutes := durationMinutes - (halfHours * 30)
-			if remainingMinutes > 5 { // 超過 5 分鐘才計入下一個半小時
-				halfHours++
-			}
-			totalCost = halfHours * rent.ParkingSpot.PricePerHalfHour
-			dailyMax := rent.ParkingSpot.DailyMaxPrice
-			days := math.Ceil(durationDays)
-			maxCost := dailyMax * days
-			totalCost = math.Min(totalCost, maxCost)
+		// 僅保留按小時計價邏輯
+		halfHours := math.Floor(durationMinutes / 30)
+		remainingMinutes := durationMinutes - (halfHours * 30)
+		if remainingMinutes > 5 { // 超過 5 分鐘才計入下一個半小時
+			halfHours++
 		}
+		totalCost = halfHours * rent.ParkingSpot.PricePerHalfHour
+		dailyMax := rent.ParkingSpot.DailyMaxPrice
+		days := math.Ceil(durationDays)
+		maxCost := dailyMax * days
+		totalCost = math.Min(totalCost, maxCost)
 	}
 
 	rent.ActualEndTime = &actualEndTime

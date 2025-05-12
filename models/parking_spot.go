@@ -13,9 +13,8 @@ type ParkingSpot struct {
 	Location         string                    `json:"location" gorm:"type:varchar(50);not null" binding:"required,max=50"`
 	PricingType      string                    `json:"pricing_type" gorm:"type:enum('monthly', 'hourly');not null" binding:"required,oneof=monthly hourly"`
 	Status           string                    `json:"status" gorm:"type:enum('available', 'occupied', 'reserved');not null" binding:"required,oneof=available occupied reserved"`
-	PricePerHalfHour float64                   `json:"price_per_half_hour" gorm:"type:decimal(10,2);default:20.00" binding:"gte=0"` // 恢復 PricePerHalfHour
+	PricePerHalfHour float64                   `json:"price_per_half_hour" gorm:"type:decimal(10,2);default:20.00" binding:"gte=0"`
 	DailyMaxPrice    float64                   `json:"daily_max_price" gorm:"type:decimal(10,2);default:300.00" binding:"gte=0"`
-	MonthlyPrice     float64                   `json:"monthly_price" gorm:"type:decimal(10,2);default:5000.00" binding:"gte=0"` // 新增 MonthlyPrice
 	Longitude        float64                   `json:"longitude" gorm:"type:decimal(9,6);default:0.0" binding:"gte=-180,lte=180"`
 	Latitude         float64                   `json:"latitude" gorm:"type:decimal(9,6);default:0.0" binding:"gte=-90,lte=90"`
 	Member           Member                    `json:"-" gorm:"foreignKey:MemberID;references:MemberID"`
@@ -35,9 +34,8 @@ type ParkingSpotResponse struct {
 	Location         string                 `json:"location"`
 	PricingType      string                 `json:"pricing_type"`
 	Status           string                 `json:"status"`
-	PricePerHalfHour float64                `json:"price_per_half_hour"` // 恢復 PricePerHalfHour
+	PricePerHalfHour float64                `json:"price_per_half_hour"`
 	DailyMaxPrice    float64                `json:"daily_max_price"`
-	MonthlyPrice     float64                `json:"monthly_price"` // 新增 MonthlyPrice
 	Longitude        float64                `json:"longitude"`
 	Latitude         float64                `json:"latitude"`
 	AvailableDays    []AvailableDayResponse `json:"available_days"`
@@ -65,8 +63,8 @@ func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay, rents 
 	}
 
 	// 添加日誌檢查價格值
-	log.Printf("Converting ParkingSpot %d to response: PricePerHalfHour=%.2f, DailyMaxPrice=%.2f, MonthlyPrice=%.2f",
-		p.SpotID, p.PricePerHalfHour, p.DailyMaxPrice, p.MonthlyPrice)
+	log.Printf("Converting ParkingSpot %d to response: PricePerHalfHour=%.2f, DailyMaxPrice=%.2f",
+		p.SpotID, p.PricePerHalfHour, p.DailyMaxPrice)
 
 	return ParkingSpotResponse{
 		SpotID:           p.SpotID,
@@ -76,9 +74,8 @@ func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay, rents 
 		Location:         p.Location,
 		PricingType:      p.PricingType,
 		Status:           p.Status,
-		PricePerHalfHour: p.PricePerHalfHour, // 恢復 PricePerHalfHour
+		PricePerHalfHour: p.PricePerHalfHour,
 		DailyMaxPrice:    p.DailyMaxPrice,
-		MonthlyPrice:     p.MonthlyPrice, // 新增 MonthlyPrice
 		Longitude:        p.Longitude,
 		Latitude:         p.Latitude,
 		AvailableDays:    days,

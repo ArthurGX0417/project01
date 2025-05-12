@@ -399,23 +399,6 @@ func DeleteMember(id int) error {
 	return nil
 }
 
-// VerifyWifi Wifi驗證
-func VerifyWifi(memberID int) (bool, error) {
-	var member models.Member
-	// 使用 GORM 查詢 wifi_verified
-	if err := database.DB.Select("wifi_verified").First(&member, memberID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			log.Printf("Member with ID %d not found", memberID)
-			return false, fmt.Errorf("member with ID %d not found", memberID)
-		}
-		log.Printf("Failed to verify WiFi for member %d: %v", memberID, err)
-		return false, fmt.Errorf("failed to verify WiFi for member %d: %w", memberID, err)
-	}
-
-	log.Printf("Successfully verified WiFi for member %d: %v", memberID, member.WifiVerified)
-	return member.WifiVerified, nil
-}
-
 // GetMemberRentHistory 查詢特定會員的租賃歷史記錄
 func GetMemberRentHistory(memberID int) ([]models.Rent, error) {
 	var rents []models.Rent

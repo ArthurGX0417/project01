@@ -33,25 +33,19 @@ func CalculateRentCost(rent models.Rent, spot models.ParkingSpot, actualEndTime 
 	if durationMinutes <= 5 {
 		totalCost = 0
 	} else {
-		if spot.PricingType == "monthly" {
-			// 按月計費
-			months := math.Ceil(durationDays / 30)
-			totalCost = months * spot.MonthlyPrice
-		} else { // hourly
-			// 按半小時計費
-			halfHours := math.Floor(durationMinutes / 30)
-			remainingMinutes := durationMinutes - (halfHours * 30)
-			if remainingMinutes > 5 { // 超過 5 分鐘計入下一個半小時
-				halfHours++
-			}
-			totalCost = halfHours * spot.PricePerHalfHour
+		// 僅按小時計價
+		halfHours := math.Floor(durationMinutes / 30)
+		remainingMinutes := durationMinutes - (halfHours * 30)
+		if remainingMinutes > 5 { // 超過 5 分鐘計入下一個半小時
+			halfHours++
+		}
+		totalCost = halfHours * spot.PricePerHalfHour
 
-			// 應用每日上限
-			if spot.DailyMaxPrice > 0 {
-				days := math.Ceil(durationDays)
-				maxCost := spot.DailyMaxPrice * days
-				totalCost = math.Min(totalCost, maxCost)
-			}
+		// 應用每日上限
+		if spot.DailyMaxPrice > 0 {
+			days := math.Ceil(durationDays)
+			maxCost := spot.DailyMaxPrice * days
+			totalCost = math.Min(totalCost, maxCost)
 		}
 
 		// 計算超時費用（2 倍小時價格）
@@ -296,90 +290,6 @@ func LeaveAndPay(rentID int, actualEndTime time.Time) (float64, error) {
 
 	log.Printf("Successfully processed leave and pay: rent_id=%d, total_cost=%.2f", rentID, totalCost)
 	return totalCost, nil
-}
-
-// MonthlySettlement 每月收費
-func MonthlySettlement() error {
-	var rents []models.Rent
-	currentTime := time.Now().UTC()
-
-	// 查詢未結算的租用記錄
-	if err := database.DB.Where("actual_end_time IS NULL AND status IN (?, ?)", "pending", "reserved").Find(&rents).Error; err != nil {
-		log.Printf("Failed to query unsettled rents: error=%v", err)
-		return fmt.Errorf("failed to query unsettled rents: %w", err)
-	}
-
-	if len(rents) == 0 {
-		log.Printf("No unsettled rents found for settlement at %v", currentTime)
-		return nil
-	}
-
-	// 開始事務
-	tx := database.DB.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			log.Printf("Panic occurred during monthly settlement: error=%v", r)
-		}
-	}()
-
-	for i, rent := range rents {
-		// 查詢車位價格
-		var spot models.ParkingSpot
-		if err := tx.Where("spot_id = ?", rent.SpotID).First(&spot).Error; err != nil {
-			tx.Rollback()
-			log.Printf("Failed to query parking spot: spot_id=%d, error=%v", rent.SpotID, err)
-			return fmt.Errorf("failed to query parking spot for rent %d: %w", rent.RentID, err)
-		}
-
-		// 驗證 spot_id 一致性
-		if spot.SpotID != rent.SpotID {
-			tx.Rollback()
-			log.Printf("Inconsistent spot ID: rent.SpotID=%d, spot.SpotID=%d", rent.SpotID, spot.SpotID)
-			return fmt.Errorf("inconsistent spot ID for rent %d: expected %d, got %d", rent.RentID, rent.SpotID, spot.SpotID)
-		}
-
-		// 計算費用
-		totalCost, err := CalculateRentCost(rent, spot, currentTime)
-		if err != nil {
-			tx.Rollback()
-			log.Printf("Failed to calculate rent cost: rent_id=%d, error=%v", rent.RentID, err)
-			return fmt.Errorf("failed to calculate rent cost for rent %d: %w", rent.RentID, err)
-		}
-
-		// 更新租用記錄
-		rents[i].ActualEndTime = &currentTime
-		rents[i].TotalCost = totalCost
-		rents[i].Status = "completed"
-		if err := tx.Save(&rents[i]).Error; err != nil {
-			tx.Rollback()
-			log.Printf("Failed to update rent: rent_id=%d, error=%v", rent.RentID, err)
-			return fmt.Errorf("failed to update rent %d: %w", rent.RentID, err)
-		}
-
-		// 更新車位狀態
-		newStatus, err := UpdateParkingSpotStatus(tx, rent.SpotID, currentTime)
-		if err != nil {
-			tx.Rollback()
-			log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", rent.SpotID, err)
-			return fmt.Errorf("failed to update parking spot status for rent %d: %w", rent.RentID, err)
-		}
-		spot.Status = newStatus
-		if err := tx.Save(&spot).Error; err != nil {
-			tx.Rollback()
-			log.Printf("Failed to update parking spot status in DB: spot_id=%d, error=%v", spot.SpotID, err)
-			return fmt.Errorf("failed to update parking spot status for rent %d: %w", rent.RentID, err)
-		}
-	}
-
-	// 提交事務
-	if err := tx.Commit().Error; err != nil {
-		log.Printf("Failed to commit transaction during monthly settlement: error=%v", err)
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	log.Printf("Successfully completed monthly settlement for %d rents at %v", len(rents), currentTime)
-	return nil
 }
 
 // GetRentByID 查詢特定租賃記錄

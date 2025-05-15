@@ -511,3 +511,41 @@ func DeleteParkingSpot(spotID int, currentMemberID int, role string) error {
 	log.Printf("Successfully deleted parking spot with ID %d", spotID)
 	return nil
 }
+
+// GetMyParkingSpots 根據 member_id 查詢會員共享的所有車位
+func GetMyParkingSpots(memberID int, role string) ([]models.ParkingSpotResponse, error) {
+	var member models.Member
+	if err := database.DB.Where("member_id = ?", memberID).First(&member).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, err
+		}
+		log.Printf("Database error while fetching member: %v", err)
+		return nil, err
+	}
+
+	var parkingSpots []models.ParkingSpot
+	query := database.DB.
+		Preload("Member").
+		Preload("AvailableDays").
+		Preload("Rents", "actual_end_time IS NULL AND end_time > ?", time.Now().UTC())
+
+	// 根據角色決定查詢條件
+	if role != "admin" {
+		query = query.Where("member_id = ?", memberID)
+	}
+
+	if err := query.Find(&parkingSpots).Error; err != nil {
+		log.Printf("Database error while fetching parking spots: %v", err)
+		return nil, err
+	}
+
+	// 轉換為回應格式
+	var responses []models.ParkingSpotResponse
+	for _, spot := range parkingSpots {
+		response := spot.ToResponse(spot.AvailableDays, spot.Rents)
+		responses = append(responses, response)
+	}
+
+	log.Printf("Found %d parking spots for member %d (role: %s)", len(parkingSpots), memberID, role)
+	return responses, nil
+}

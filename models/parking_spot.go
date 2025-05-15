@@ -80,6 +80,6 @@ func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay, rents 
 		Latitude:         p.Latitude,
 		AvailableDays:    days,
 		Member:           p.Member.ToResponse(),
-		Rents:            rentResponses,
+		Rents:            nil,
 	}
 }

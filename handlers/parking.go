@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type AvailableDayInput struct {
@@ -552,4 +553,90 @@ func DeleteParkingSpot(c *gin.Context) {
 	}
 
 	SuccessResponse(c, http.StatusOK, "車位刪除成功", nil)
+}
+
+// GetMyParkingSpots 處理 GET /api/v1/parking/my-spots 請求
+func GetMyParkingSpots(c *gin.Context) {
+	// 從上下文中獲取 member_id
+	memberID, exists := c.Get("member_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "member_id not found in token",
+			"code":    "ERR_NO_MEMBER_ID",
+		})
+		return
+	}
+
+	memberIDInt, ok := memberID.(int)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "invalid member_id type",
+			"code":    "ERR_INVALID_MEMBER_ID",
+		})
+		return
+	}
+
+	// 從上下文中獲取 role
+	role, exists := c.Get("role")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "role not found in token",
+			"code":    "ERR_NO_ROLE",
+		})
+		return
+	}
+
+	roleStr, ok := role.(string)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "invalid role type",
+			"code":    "ERR_INVALID_ROLE",
+		})
+		return
+	}
+
+	// 調用服務層查詢車位
+	parkingSpots, err := services.GetMyParkingSpots(memberIDInt, roleStr)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  false,
+				"message": "會員不存在",
+				"error":   "member not found",
+				"code":    "ERR_MEMBER_NOT_FOUND",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  false,
+				"message": "無法獲取車位列表",
+				"error":   "failed to fetch parking spots: database error",
+				"code":    "ERR_DATABASE",
+			})
+		}
+		return
+	}
+
+	// 如果沒有車位，返回空列表
+	if len(parkingSpots) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  true,
+			"message": "目前沒有共享的車位",
+			"data":    []models.ParkingSpotResponse{},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "成功獲取車位列表",
+		"data":    parkingSpots,
+	})
 }

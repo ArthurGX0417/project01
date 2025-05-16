@@ -372,18 +372,9 @@ func UpdateParkingSpot(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "車位更新成功", updatedSpot.ToResponse(availableDays, rents))
 }
 
-// GetParkingSpotIncome 查看指定車位的收入（僅限 shared_owner 或 admin）
+// GetMemberIncome 查看指定會員的所有車位收入（僅限 shared_owner 或 admin）
 func GetParkingSpotIncome(c *gin.Context) {
-	log.Printf("Received request for GetParkingSpotIncome with spot_id: %s", c.Param("id"))
-
-	// 獲取車位 ID
-	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		log.Printf("Invalid parking spot ID: %v", err)
-		ErrorResponse(c, http.StatusBadRequest, "無效的車位 ID", "parking spot ID must be a number", "ERR_INVALID_SPOT_ID")
-		return
-	}
+	log.Printf("Received request for GetMemberIncome with member_id from token")
 
 	// 獲取查詢參數 start_date 和 end_date
 	startDateStr := c.Query("start_date")
@@ -453,18 +444,32 @@ func GetParkingSpotIncome(c *gin.Context) {
 	}
 	log.Printf("Authenticated member - member_id: %d, role: %s", currentMemberIDInt, currentRoleStr)
 
+	// 可選：允許查詢特定 member_id（僅限 admin），否則使用當前會員 ID
+	memberID := currentMemberIDInt
+	if currentRoleStr == "admin" {
+		memberIDStr := c.Query("member_id")
+		if memberIDStr != "" {
+			parsedMemberID, err := strconv.Atoi(memberIDStr)
+			if err == nil {
+				memberID = parsedMemberID
+			} else {
+				log.Printf("Invalid member_id query parameter: %v", err)
+			}
+		}
+	}
+
 	// 調用 services 層計算收入，傳遞角色
-	totalIncome, spot, rents, err := services.GetParkingSpotIncome(id, startDate, endDate, currentMemberIDInt, currentRoleStr)
+	totalIncome, spots, rents, err := services.GetMemberIncome(memberID, startDate, endDate, currentMemberIDInt, currentRoleStr)
 	if err != nil {
-		log.Printf("Failed to get parking spot income: %v", err)
-		if strings.Contains(err.Error(), "parking spot not found") {
-			ErrorResponse(c, http.StatusNotFound, "車位不存在", "parking spot not found", "ERR_SPOT_NOT_FOUND")
+		log.Printf("Failed to get member income: %v", err)
+		if strings.Contains(err.Error(), "no parking spots found") {
+			ErrorResponse(c, http.StatusNotFound, "會員無車位", "no parking spots found for member", "ERR_NO_SPOTS_FOUND")
 		} else if strings.Contains(err.Error(), "permission denied") {
-			ErrorResponse(c, http.StatusForbidden, "無權限", "you can only view income of your own parking spot", "ERR_INSUFFICIENT_PERMISSIONS")
+			ErrorResponse(c, http.StatusForbidden, "無權限", "you can only view income of your own account", "ERR_INSUFFICIENT_PERMISSIONS")
 		} else if strings.Contains(err.Error(), "invalid role") {
 			ErrorResponse(c, http.StatusForbidden, "無權限", "invalid role", "ERR_INSUFFICIENT_PERMISSIONS")
 		} else {
-			ErrorResponse(c, http.StatusInternalServerError, "查詢車位收入失敗", err.Error(), "ERR_INTERNAL_SERVER")
+			ErrorResponse(c, http.StatusInternalServerError, "查詢會員收入失敗", err.Error(), "ERR_INTERNAL_SERVER")
 		}
 		return
 	}
@@ -481,24 +486,24 @@ func GetParkingSpotIncome(c *gin.Context) {
 		rentResponses[i] = RentIncomeResponse{
 			RentID:        rent.RentID,
 			SpotID:        rent.SpotID,
-			StartTime:     rent.StartTime.Format("2006-01-02 15:04:05"), // 格式化為 YYYY-MM-DD HH:mm:ss
-			ActualEndTime: actualEndTime,                                // 格式化為 YYYY-MM-DD HH:mm:ss 或 null
+			StartTime:     rent.StartTime.Format("2006-01-02 15:04:05"),
+			ActualEndTime: actualEndTime,
 			TotalCost:     rent.TotalCost,
 		}
 	}
 
-	// 構造回應，包含租賃記錄
+	// 構造回應，包含所有車位和租賃記錄
 	response := gin.H{
-		"spot_id":      spot.SpotID,
-		"location":     spot.Location,
+		"member_id":    memberID,
 		"start_date":   startDateStr,
 		"end_date":     endDateStr,
 		"total_income": totalIncome,
+		"spots":        spots,
 		"rents":        rentResponses,
 	}
 
 	log.Printf("Sending response: %v", response)
-	SuccessResponse(c, http.StatusOK, "查詢車位收入成功", response)
+	SuccessResponse(c, http.StatusOK, "查詢會員收入成功", response)
 }
 
 func DeleteParkingSpot(c *gin.Context) {

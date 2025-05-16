@@ -431,7 +431,61 @@ type AvailableDayInput struct {
 	IsAvailable bool   `json:"is_available"`
 }
 
-// GetParkingSpotIncome 計算指定車位在指定時間範圍內的收入，並返回相關租賃記錄
+// GetMemberIncome 計算指定會員在指定時間範圍內的所有車位收入，並返回相關總計和記錄
+func GetMemberIncome(memberID int, startDate, endDate time.Time, currentMemberID int, role string) (float64, []models.ParkingSpot, []models.Rent, error) {
+	// 驗證角色
+	validRoles := map[string]bool{"admin": true, "shared_owner": true}
+	if !validRoles[role] {
+		log.Printf("Invalid role: %s", role)
+		return 0, nil, nil, fmt.Errorf("invalid role: %s", role)
+	}
+
+	// 檢查權限：admin 可以查看任何會員的收入，shared_owner 只能查看自己的收入
+	if role != "admin" {
+		if memberID != currentMemberID {
+			log.Printf("Permission denied: member %d (role: %s) is not authorized to view income for member %d", currentMemberID, role, memberID)
+			return 0, nil, nil, fmt.Errorf("permission denied: you can only view income of your own account")
+		}
+	}
+	log.Printf("Permission granted: member %d (role: %s) can view income for member %d", currentMemberID, role, memberID)
+
+	// 查詢該會員擁有的所有車位
+	var spots []models.ParkingSpot
+	if err := database.DB.Where("member_id = ?", memberID).Find(&spots).Error; err != nil {
+		log.Printf("Failed to find parking spots for member %d: %v", memberID, err)
+		return 0, nil, nil, fmt.Errorf("no parking spots found for member: %w", err)
+	}
+	if len(spots) == 0 {
+		log.Printf("No parking spots found for member %d", memberID)
+		return 0, spots, nil, nil // 返回空車位列表，收入為 0
+	}
+
+	// 查詢所有車位的租賃記錄
+	var rents []models.Rent
+	spotIDs := make([]int, len(spots))
+	for i, spot := range spots {
+		spotIDs[i] = spot.SpotID
+	}
+	if err := database.DB.Where("spot_id IN ? AND start_time >= ? AND start_time <= ? AND total_cost > 0", spotIDs, startDate, endDate).Find(&rents).Error; err != nil {
+		log.Printf("Failed to fetch rents for member %d's spots: %v", memberID, err)
+		return 0, nil, nil, fmt.Errorf("failed to fetch rents: %w", err)
+	}
+
+	// 計算總收入
+	var totalIncome float64
+	if err := database.DB.Model(&models.Rent{}).
+		Where("spot_id IN ? AND start_time >= ? AND start_time <= ? AND total_cost > 0", spotIDs, startDate, endDate).
+		Select("COALESCE(SUM(total_cost), 0)").
+		Scan(&totalIncome).Error; err != nil {
+		log.Printf("Failed to calculate income for member %d's spots: %v", memberID, err)
+		return 0, nil, nil, fmt.Errorf("failed to calculate income: %w", err)
+	}
+
+	log.Printf("Calculated total income for member %d: %.2f, found %d rents across %d spots", memberID, totalIncome, len(rents), len(spots))
+	return totalIncome, spots, rents, nil
+}
+
+// GetParkingSpotIncome 計算指定車位在指定時間範圍內的收入，並返回相關租賃記錄（保留用於單一車位查詢）
 func GetParkingSpotIncome(spotID int, startDate, endDate time.Time, currentMemberID int, role string) (float64, *models.ParkingSpot, []models.Rent, error) {
 	// 驗證角色
 	validRoles := map[string]bool{"admin": true, "shared_owner": true}

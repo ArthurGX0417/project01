@@ -325,8 +325,8 @@ func Path(router *gin.RouterGroup) {
 				parkingWithAuth.GET("/available", RoleMiddleware("renter", "shared_owner", "admin"), handlers.GetAvailableParkingSpots)
 				// 查詢特定車位：renter 和 shared_owner 都可以訪問
 				parkingWithAuth.GET("/:id", RoleMiddleware("renter", "shared_owner"), handlers.GetParkingSpot)
-				// 查看車位收入：shared_owner 和 admin 都可以訪問
-				parkingWithAuth.GET("/:id/income", RoleMiddleware("shared_owner", "admin"), handlers.GetParkingSpotIncome)
+				// 查看會員所有車位收入：shared_owner 和 admin 都可以訪問
+				parkingWithAuth.GET("/income", RoleMiddleware("shared_owner", "admin"), handlers.GetParkingSpotIncome)
 				// 更新車位：僅 shared_owner 和 admin 可以操作
 				parkingWithAuth.PUT("/:id", RoleMiddleware("shared_owner", "admin"), handlers.UpdateParkingSpot)
 				// 刪除車位：僅 shared_owner 和 admin 可以操作

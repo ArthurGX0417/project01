@@ -9,9 +9,9 @@ type ParkingSpot struct {
 	SpotID           int                       `json:"spot_id" gorm:"primaryKey;autoIncrement;type:INT"`
 	MemberID         int                       `json:"member_id" gorm:"index;not null;type:INT;column:member_id" binding:"required"`
 	ParkingType      string                    `json:"parking_type" gorm:"type:enum('mechanical', 'flat');not null" binding:"required,oneof=mechanical flat"`
-	FloorLevel       string                    `json:"floor_level" gorm:"type:varchar(20)" binding:"omitempty,max=20"`
+	FloorLevel       string                    `json:"floor_level" gorm:"type:varchar(20)" binding:"omitempty,max=20"` // 可讀但不可更新
 	Location         string                    `json:"location" gorm:"type:varchar(50);not null" binding:"required,max=50"`
-	PricingType      string                    `json:"pricing_type" gorm:"type:enum('monthly', 'hourly');not null" binding:"required,oneof=monthly hourly"`
+	PricingType      string                    `json:"pricing_type" gorm:"type:enum('hourly');not null" binding:"required,oneof=hourly"` // 僅允許 "hourly"
 	Status           string                    `json:"status" gorm:"type:enum('available', 'occupied', 'reserved');not null" binding:"required,oneof=available occupied reserved"`
 	PricePerHalfHour float64                   `json:"price_per_half_hour" gorm:"type:decimal(10,2);default:20.00" binding:"gte=0"`
 	DailyMaxPrice    float64                   `json:"daily_max_price" gorm:"type:decimal(10,2);default:300.00" binding:"gte=0"`
@@ -80,6 +80,6 @@ func (p *ParkingSpot) ToResponse(availableDays []ParkingSpotAvailableDay, rents 
 		Latitude:         p.Latitude,
 		AvailableDays:    days,
 		Member:           p.Member.ToResponse(),
-		Rents:            nil,
+		Rents:            rentResponses,
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"log"
 	"project01/database"
 	"project01/models"
+	"regexp"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -250,6 +251,9 @@ func GetParkingSpotByID(id int) (*models.ParkingSpot, []models.ParkingSpotAvaila
 	return &spot, days, nil
 }
 
+// 預編譯 floor_level 的正則表達式
+var floorLevelRegex = regexp.MustCompile(`^(ground|([1-9][0-9]*[F])|(B[1-9][0-9]*))$`)
+
 // UpdateParkingSpot 更新車位信息
 func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 	var spot models.ParkingSpot
@@ -262,14 +266,7 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 		return fmt.Errorf("failed to find parking spot with ID %d: %w", id, err)
 	}
 
-	var member models.Member
-	if err := database.DB.Where("member_id = ?", spot.MemberID).First(&member).Error; err != nil {
-		log.Printf("Failed to verify member with ID %d: %v", spot.MemberID, err)
-		return fmt.Errorf("failed to verify member: %w", err)
-	}
-	if member.Role != "shared_owner" {
-		return fmt.Errorf("only shared_owner can update parking spot")
-	}
+	// 權限檢查移至處理器層，服務層僅處理更新邏輯
 
 	mappedFields := make(map[string]interface{})
 	for key, value := range updatedFields {
@@ -288,8 +285,8 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 			if !ok {
 				return fmt.Errorf("invalid pricing_type type: must be a string")
 			}
-			if pricingType != "monthly" && pricingType != "hourly" {
-				return fmt.Errorf("invalid pricing_type: must be 'monthly' or 'hourly'")
+			if pricingType != "hourly" {
+				return fmt.Errorf("invalid pricing_type: must be 'hourly'")
 			}
 			mappedFields["pricing_type"] = pricingType
 		case "status":
@@ -337,6 +334,19 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 				return fmt.Errorf("invalid latitude type: must be a number")
 			}
 			mappedFields["latitude"] = lat
+		case "floor_level":
+			floorLevel, ok := value.(string)
+			if !ok {
+				return fmt.Errorf("invalid floor_level type: must be a string")
+			}
+			if len(floorLevel) > 20 {
+				return fmt.Errorf("floor_level must not exceed 20 characters")
+			}
+			// 使用預編譯的正則表達式驗證 floor_level
+			if !floorLevelRegex.MatchString(floorLevel) {
+				return fmt.Errorf("invalid floor_level: must be 'ground', a number followed by 'F' (e.g., '1F'), or 'B' followed by a number (e.g., 'B1')")
+			}
+			mappedFields["floor_level"] = floorLevel
 		case "available_days":
 			days, ok := value.([]interface{})
 			if !ok {
@@ -398,7 +408,8 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 				return fmt.Errorf("failed to commit transaction for available days: %w", err)
 			}
 		default:
-			return fmt.Errorf("invalid field: %s", key)
+			log.Printf("Ignoring invalid field: %s", key)
+			continue
 		}
 	}
 

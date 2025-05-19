@@ -473,12 +473,19 @@ func CheckExpiredReservations() error {
 
 // UpdateParkingSpotStatus 統一更新車位狀態
 func UpdateParkingSpotStatus(tx *gorm.DB, spotID int, now time.Time) (string, error) {
-	var activeRentCount int64
+	var pendingCount int64
+	var reservedCount int64
 	if err := tx.Model(&models.Rent{}).
-		Where("spot_id = ? AND status IN (?, ?) AND end_time >= ?", spotID, "pending", "reserved", now).
-		Count(&activeRentCount).Error; err != nil {
-		log.Printf("Failed to check active rents: spot_id=%d, error=%v", spotID, err)
-		return "", fmt.Errorf("failed to check active rents: %w", err)
+		Where("spot_id = ? AND status = ? AND end_time >= ?", spotID, "pending", now).
+		Count(&pendingCount).Error; err != nil {
+		log.Printf("Failed to check pending rents: spot_id=%d, error=%v", spotID, err)
+		return "", fmt.Errorf("failed to check pending rents: %w", err)
+	}
+	if err := tx.Model(&models.Rent{}).
+		Where("spot_id = ? AND status = ? AND end_time >= ?", spotID, "reserved", now).
+		Count(&reservedCount).Error; err != nil {
+		log.Printf("Failed to check reserved rents: spot_id=%d, error=%v", spotID, err)
+		return "", fmt.Errorf("failed to check reserved rents: %w", err)
 	}
 
 	var isDayAvailable bool
@@ -492,7 +499,9 @@ func UpdateParkingSpotStatus(tx *gorm.DB, spotID int, now time.Time) (string, er
 	}
 	isDayAvailable = availableDayCount > 0
 
-	if activeRentCount > 0 {
+	if pendingCount > 0 {
+		return "pending", nil
+	} else if reservedCount > 0 {
 		return "reserved", nil
 	} else if isDayAvailable {
 		return "available", nil
@@ -521,6 +530,36 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 	if err := query.Find(&rents).Error; err != nil {
 		log.Printf("Failed to query currently rented spots: error=%v", err)
 		return nil, fmt.Errorf("failed to query currently rented spots: %w", err)
+	}
+
+	// 計算費用並同步車位狀態
+	for i := range rents {
+		var spot models.ParkingSpot
+		if err := database.DB.First(&spot, rents[i].SpotID).Error; err != nil {
+			log.Printf("Failed to query parking spot: spot_id=%d, error=%v", rents[i].SpotID, err)
+			continue
+		}
+
+		// 計算基礎費用（使用當前時間）
+		totalCost, err := CalculateRentCost(rents[i], spot, now)
+		if err != nil {
+			log.Printf("Failed to calculate cost for rent: rent_id=%d, error=%v", rents[i].RentID, err)
+			continue
+		}
+		rents[i].TotalCost = totalCost
+
+		// 同步車位狀態
+		if rents[i].Status == "pending" && spot.Status != "pending" {
+			spot.Status = "pending"
+			if err := database.DB.Save(&spot).Error; err != nil {
+				log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", spot.SpotID, err)
+			}
+		} else if rents[i].Status == "reserved" && spot.Status != "reserved" {
+			spot.Status = "reserved"
+			if err := database.DB.Save(&spot).Error; err != nil {
+				log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", spot.SpotID, err)
+			}
+		}
 	}
 
 	log.Printf("Successfully fetched %d currently rented spots for member_id=%d, role=%s", len(rents), memberID, role)

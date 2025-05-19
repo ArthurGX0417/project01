@@ -1139,7 +1139,6 @@ func GetCurrentlyRentedSpots(c *gin.Context) {
 		return
 	}
 
-	// 僅允許 renter 和 shared_owner 訪問
 	if roleStr != "renter" && roleStr != "shared_owner" {
 		ErrorResponse(c, http.StatusForbidden, "權限不足", "only renter and shared_owner can view currently rented spots")
 		return
@@ -1152,6 +1151,7 @@ func GetCurrentlyRentedSpots(c *gin.Context) {
 		return
 	}
 
+	now := time.Now().UTC()
 	rentResponses := make([]models.RentResponse, len(rents))
 	for i, rent := range rents {
 		availableDays, err := services.FetchAvailableDays(rent.SpotID)
@@ -1160,13 +1160,21 @@ func GetCurrentlyRentedSpots(c *gin.Context) {
 			availableDays = []models.ParkingSpotAvailableDay{}
 		}
 
+		// 過濾掉過去的日期
+		filteredAvailableDays := []models.ParkingSpotAvailableDay{}
+		for _, day := range availableDays {
+			if day.AvailableDate.After(now) || day.AvailableDate.Equal(now) {
+				filteredAvailableDays = append(filteredAvailableDays, day)
+			}
+		}
+
 		var parkingSpotRents []models.Rent
 		if err := database.DB.Where("spot_id = ?", rent.SpotID).Find(&parkingSpotRents).Error; err != nil {
 			log.Printf("Failed to fetch rents for spot %d: error=%v", rent.SpotID, err)
 			parkingSpotRents = []models.Rent{}
 		}
 
-		rentResponses[i] = rent.ToResponse(availableDays, parkingSpotRents)
+		rentResponses[i] = rent.ToResponse(filteredAvailableDays, parkingSpotRents)
 	}
 
 	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)

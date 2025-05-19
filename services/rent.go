@@ -509,14 +509,14 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 		Preload("Member").
 		Preload("ParkingSpot").
 		Preload("ParkingSpot.Member").
-		Where("status IN (?) AND (actual_end_time IS NULL OR actual_end_time > ?)", []string{"pending", "reserved"}, now).
-		Joins("JOIN parking_spot ON parking_spot.spot_id = rents.spot_id") // 修正表名
+		Where("status IN (?) AND (actual_end_time IS NULL OR actual_end_time > ?)", []string{"pending", "reserved"}, now)
 
 	if role == "renter" {
 		query = query.Where("member_id = ?", memberID)
 	} else if role == "shared_owner" {
-		query = query.Joins("JOIN parking_spot ON parking_spot.spot_id = rents.spot_id").
-			Where("parking_spot.member_id = ?", memberID)
+		// 使用別名 ps 來避免與 Preload 衝突
+		query = query.Joins("JOIN parking_spot ps ON ps.spot_id = rents.spot_id").
+			Where("ps.member_id = ?", memberID)
 	}
 
 	if err := query.Find(&rents).Error; err != nil {

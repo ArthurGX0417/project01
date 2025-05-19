@@ -505,19 +505,18 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 	var rents []models.Rent
 	now := time.Now().UTC()
 
-	// 根據角色過濾
 	query := database.DB.
 		Preload("Member").
 		Preload("ParkingSpot").
 		Preload("ParkingSpot.Member").
-		Where("status IN (?) AND (actual_end_time IS NULL OR actual_end_time > ?)", []string{"pending", "reserved"}, now)
+		Where("status IN (?) AND (actual_end_time IS NULL OR actual_end_time > ?)", []string{"pending", "reserved"}, now).
+		Joins("JOIN parking_spot ON parking_spot.spot_id = rents.spot_id") // 修正表名
 
 	if role == "renter" {
 		query = query.Where("member_id = ?", memberID)
 	} else if role == "shared_owner" {
-		// shared_owner 可以查看自己車位的所有租賃記錄
-		query = query.Joins("JOIN parking_spots ON parking_spots.spot_id = rents.spot_id").
-			Where("parking_spots.member_id = ?", memberID)
+		query = query.Joins("JOIN parking_spot ON parking_spot.spot_id = rents.spot_id").
+			Where("parking_spot.member_id = ?", memberID)
 	}
 
 	if err := query.Find(&rents).Error; err != nil {

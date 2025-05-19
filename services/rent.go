@@ -499,3 +499,32 @@ func UpdateParkingSpotStatus(tx *gorm.DB, spotID int, now time.Time) (string, er
 	}
 	return "occupied", nil
 }
+
+// GetCurrentlyRentedSpots 查詢目前正在租用中的車位
+func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
+	var rents []models.Rent
+	now := time.Now().UTC()
+
+	// 根據角色過濾
+	query := database.DB.
+		Preload("Member").
+		Preload("ParkingSpot").
+		Preload("ParkingSpot.Member").
+		Where("status IN (?) AND (actual_end_time IS NULL OR actual_end_time > ?)", []string{"pending", "reserved"}, now)
+
+	if role == "renter" {
+		query = query.Where("member_id = ?", memberID)
+	} else if role == "shared_owner" {
+		// shared_owner 可以查看自己車位的所有租賃記錄
+		query = query.Joins("JOIN parking_spots ON parking_spots.spot_id = rents.spot_id").
+			Where("parking_spots.member_id = ?", memberID)
+	}
+
+	if err := query.Find(&rents).Error; err != nil {
+		log.Printf("Failed to query currently rented spots: error=%v", err)
+		return nil, fmt.Errorf("failed to query currently rented spots: %w", err)
+	}
+
+	log.Printf("Successfully fetched %d currently rented spots for member_id=%d, role=%s", len(rents), memberID, role)
+	return rents, nil
+}

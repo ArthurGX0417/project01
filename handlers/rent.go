@@ -1113,3 +1113,61 @@ func ConfirmReservation(c *gin.Context) {
 		"message": "預約確認成功，已轉為租賃",
 	})
 }
+
+// GetCurrentlyRentedSpots 查詢目前正在租用中的車位
+func GetCurrentlyRentedSpots(c *gin.Context) {
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token")
+		return
+	}
+
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type")
+		return
+	}
+
+	role, exists := c.Get("role")
+	if !exists {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "role not found in token")
+		return
+	}
+	roleStr, ok := role.(string)
+	if !ok {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid role type")
+		return
+	}
+
+	// 僅允許 renter 和 shared_owner 訪問
+	if roleStr != "renter" && roleStr != "shared_owner" {
+		ErrorResponse(c, http.StatusForbidden, "權限不足", "only renter and shared_owner can view currently rented spots")
+		return
+	}
+
+	rents, err := services.GetCurrentlyRentedSpots(currentMemberIDInt, roleStr)
+	if err != nil {
+		log.Printf("Failed to get currently rented spots: error=%v", err)
+		ErrorResponse(c, http.StatusInternalServerError, "查詢失敗", err.Error())
+		return
+	}
+
+	rentResponses := make([]models.RentResponse, len(rents))
+	for i, rent := range rents {
+		availableDays, err := services.FetchAvailableDays(rent.SpotID)
+		if err != nil {
+			log.Printf("Failed to fetch available days for spot %d: error=%v", rent.SpotID, err)
+			availableDays = []models.ParkingSpotAvailableDay{}
+		}
+
+		var parkingSpotRents []models.Rent
+		if err := database.DB.Where("spot_id = ?", rent.SpotID).Find(&parkingSpotRents).Error; err != nil {
+			log.Printf("Failed to fetch rents for spot %d: error=%v", rent.SpotID, err)
+			parkingSpotRents = []models.Rent{}
+		}
+
+		rentResponses[i] = rent.ToResponse(availableDays, parkingSpotRents)
+	}
+
+	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)
+}

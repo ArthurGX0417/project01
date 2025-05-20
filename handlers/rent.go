@@ -1116,33 +1116,9 @@ func ConfirmReservation(c *gin.Context) {
 
 // GetCurrentlyRentedSpots 查詢目前正在租用中的車位
 func GetCurrentlyRentedSpots(c *gin.Context) {
-	currentMemberID, exists := c.Get("member_id")
-	if !exists {
-		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token")
-		return
-	}
-
-	currentMemberIDInt, ok := currentMemberID.(int)
-	if !ok {
-		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type")
-		return
-	}
-
-	role, exists := c.Get("role")
-	if !exists {
-		ErrorResponse(c, http.StatusUnauthorized, "未授權", "role not found in token")
-		return
-	}
-	roleStr, ok := role.(string)
-	if !ok {
-		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid role type")
-		return
-	}
-
-	if roleStr != "renter" && roleStr != "shared_owner" {
-		ErrorResponse(c, http.StatusForbidden, "權限不足", "only renter and shared_owner can view currently rented spots")
-		return
-	}
+	// 直接從上下文獲取 member_id 和 role，無需檢查
+	currentMemberIDInt := c.GetInt("member_id")
+	roleStr := c.GetString("role")
 
 	rents, err := services.GetCurrentlyRentedSpots(currentMemberIDInt, roleStr)
 	if err != nil {

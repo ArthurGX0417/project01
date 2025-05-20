@@ -525,6 +525,8 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 	} else if role == "shared_owner" {
 		query = query.Joins("JOIN parking_spot ps ON ps.spot_id = rents.spot_id").
 			Where("ps.member_id = ?", memberID)
+	} else if role == "admin" {
+		// admin 可以查詢所有租賃記錄，無需額外條件
 	}
 
 	if err := query.Find(&rents).Error; err != nil {

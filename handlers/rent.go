@@ -375,7 +375,7 @@ func ReserveParkingSpot(c *gin.Context) {
 
 	// 移除 WiFi 驗證相關代碼
 	var parkingSpot models.ParkingSpot
-	if err := database.DB.Preload("Rents").First(&parkingSpot, input.SpotID).Error; err != nil {
+	if err := database.DB.Preload("Rents", "status IN (?)", []string{"pending", "reserved"}).First(&parkingSpot, input.SpotID).Error; err != nil {
 		log.Printf("Failed to find parking spot %d: %v", input.SpotID, err)
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  false,

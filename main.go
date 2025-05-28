@@ -42,6 +42,12 @@ func main() {
 	)
 	log.Println("Database migration completed")
 
+	// 同步 parking spot 狀態
+	if err := services.SyncParkingSpotStatus(); err != nil {
+		log.Fatalf("Failed to sync parking spot statuses: %v", err)
+	}
+	log.Println("Parking spot statuses synced successfully")
+
 	// 確保預設管理員存在
 	ensureAdminExists()
 

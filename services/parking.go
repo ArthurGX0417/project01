@@ -148,15 +148,13 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) ([]models.ParkingSpot, [][]models.ParkingSpotAvailableDay, error) {
 	var spots []models.ParkingSpot
 
-	// 驗證 radius 參數
 	if radius <= 0 {
-		radius = 3.0 // 預設值為 3 公里
+		radius = 3.0
 	}
 	if radius > 50 {
-		radius = 50.0 // 最大值為 50 公里
+		radius = 50.0
 	}
 
-	// Haversine 公式計算距離（單位：公里）
 	distanceSQL := `
         6371 * acos(
             cos(radians(?)) * cos(radians(parking_spot.latitude)) * 
@@ -165,7 +163,6 @@ func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) 
         )
     `
 
-	// 計算日期範圍
 	now := time.Now().UTC()
 	parsedDate, err := time.Parse("2006-01-02", date)
 	if err != nil {
@@ -179,7 +176,6 @@ func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) 
 	startOfDay := time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, time.UTC)
 	endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Nanosecond)
 
-	// 查詢當前正在被租用的車位
 	var rentedSpotIDs []int
 	if err := database.DB.Model(&models.Rent{}).
 		Select("spot_id").
@@ -190,8 +186,8 @@ func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) 
 		log.Printf("Failed to query rented spot IDs: %v", err)
 		return nil, nil, fmt.Errorf("failed to query rented spot IDs: %w", err)
 	}
+	log.Printf("Rented spot IDs for date %s: %v", date, rentedSpotIDs)
 
-	// 構建查詢，要求 parking_spot_available_day 必須有記錄，或者 status 為 available
 	query := database.DB.
 		Preload("Member").
 		Preload("Rents", "end_time >= ? OR actual_end_time IS NULL", now).
@@ -201,7 +197,15 @@ func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) 
 		Where(distanceSQL+" <= ?", latitude, longitude, latitude, radius)
 
 	if len(rentedSpotIDs) > 0 {
+		log.Printf("Excluding rented spot IDs: %v", rentedSpotIDs)
 		query = query.Where("parking_spot.spot_id NOT IN (?)", rentedSpotIDs)
+	}
+
+	var debugSpots []models.ParkingSpot
+	if err := database.DB.Where("status = ? AND latitude != 0 AND longitude != 0", "available").Find(&debugSpots).Error; err != nil {
+		log.Printf("Failed to fetch spots for debugging: %v", err)
+	} else {
+		log.Printf("Available spots before filtering: %v", debugSpots)
 	}
 
 	err = query.Find(&spots).Error
@@ -211,29 +215,26 @@ func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) 
 	}
 
 	if len(spots) == 0 {
+		log.Printf("No parking spots found after filtering for date %s", date)
 		return spots, nil, nil
 	}
 
-	// 提取 spotIDs
 	spotIDs := make([]int, len(spots))
 	for i, spot := range spots {
 		spotIDs[i] = spot.SpotID
 	}
 
-	// 查詢可用日期
 	var availableDaysRecords []models.ParkingSpotAvailableDay
 	if err := database.DB.Where("parking_spot_id IN ? AND available_date = ? AND is_available = ?", spotIDs, date, true).Find(&availableDaysRecords).Error; err != nil {
 		log.Printf("Failed to fetch available days for spots: %v", err)
 		availableDaysRecords = []models.ParkingSpotAvailableDay{}
 	}
 
-	// 將可用日期按 spotID 分組
 	availableDaysMap := make(map[int][]models.ParkingSpotAvailableDay)
 	for _, record := range availableDaysRecords {
 		availableDaysMap[record.SpotID] = append(availableDaysMap[record.SpotID], record)
 	}
 
-	// 為每個停車位分配可用日期
 	availableDaysList := make([][]models.ParkingSpotAvailableDay, len(spots))
 	for i, spot := range spots {
 		availableDaysList[i] = availableDaysMap[spot.SpotID]
@@ -643,4 +644,36 @@ func GetMyParkingSpots(memberID int, role string) ([]models.ParkingSpotResponse,
 
 	log.Printf("Found %d parking spots for member %d (role: %s)", len(parkingSpots), memberID, role)
 	return responses, nil
+}
+
+func SyncParkingSpotStatus() error {
+	var spots []models.ParkingSpot
+	if err := database.DB.Find(&spots).Error; err != nil {
+		return fmt.Errorf("failed to fetch parking spots: %w", err)
+	}
+
+	now := time.Now().UTC()
+	for _, spot := range spots {
+		var activeRents []models.Rent
+		if err := database.DB.Where("spot_id = ? AND ((actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)) AND status NOT IN ('canceled')", spot.SpotID, now, now, now).Find(&activeRents).Error; err != nil {
+			log.Printf("Failed to fetch active rents for spot %d: %v", spot.SpotID, err)
+			continue
+		}
+
+		newStatus := "available"
+		if len(activeRents) > 0 {
+			newStatus = "occupied"
+		}
+
+		if spot.Status != newStatus {
+			if err := database.DB.Model(&spot).Update("status", newStatus).Error; err != nil {
+				log.Printf("Failed to update status for spot %d: %v", spot.SpotID, err)
+				continue
+			}
+			log.Printf("Updated status for spot %d to %s", spot.SpotID, newStatus)
+		}
+	}
+
+	log.Printf("Successfully synced parking spot statuses")
+	return nil
 }

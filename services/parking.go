@@ -34,11 +34,6 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 		return fmt.Errorf("invalid pricing_type: must be 'monthly' or 'hourly'")
 	}
 
-	// 驗證 status
-	if spot.Status != "available" && spot.Status != "occupied" && spot.Status != "reserved" {
-		return fmt.Errorf("invalid status: must be 'available', 'occupied', or 'reserved'")
-	}
-
 	// 驗證經緯度
 	if spot.Latitude == 0 && spot.Longitude == 0 {
 		return fmt.Errorf("invalid latitude and longitude: both cannot be 0")
@@ -63,17 +58,45 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	seenDates := make(map[string]bool)
 	for _, day := range availableDays {
-		// 將 time.Time 格式化為 YYYY-MM-DD 進行重複檢查
 		dateStr := day.AvailableDate.Format("2006-01-02")
 		if seenDates[dateStr] {
 			return fmt.Errorf("duplicate date in available_days: %s", dateStr)
 		}
 		seenDates[dateStr] = true
-
-		// 確保日期是今天或未來的日期
 		if day.AvailableDate.Before(today) {
 			return fmt.Errorf("available date must be today or in the future: %s", dateStr)
 		}
+	}
+
+	// 根據 availableDays 動態設定 status
+	if len(availableDays) > 0 {
+		// 檢查是否有至少一個 is_available = false
+		hasUnavailable := false
+		for _, day := range availableDays {
+			if !day.IsAvailable {
+				hasUnavailable = true
+				break
+			}
+		}
+		if hasUnavailable {
+			spot.Status = "occupied"
+		} else {
+			spot.Status = "available"
+		}
+	} else {
+		// 如果 availableDays 為空，自動生成未來 30 天的預設可用日期
+		now := time.Now().UTC()
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		availableDays = make([]models.ParkingSpotAvailableDay, 0, 30)
+		for i := 0; i < 30; i++ {
+			date := today.AddDate(0, 0, i)
+			availableDays = append(availableDays, models.ParkingSpotAvailableDay{
+				AvailableDate: date,
+				IsAvailable:   true,
+			})
+		}
+		log.Printf("No available_days provided, auto-generated 30 days starting from %s", today.Format("2006-01-02"))
+		spot.Status = "available"
 	}
 
 	// 驗證會員
@@ -100,7 +123,7 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 		return fmt.Errorf("failed to create parking spot: %w", err)
 	}
 
-	// 如果提供了 availableDays，則創建可用日期記錄
+	// 創建可用日期記錄
 	for _, day := range availableDays {
 		day.SpotID = spot.SpotID
 		if err := tx.Create(&day).Error; err != nil {
@@ -117,7 +140,7 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("Successfully shared parking spot with ID %d", spot.SpotID)
+	log.Printf("Successfully shared parking spot with ID %d with status %s", spot.SpotID, spot.Status)
 	return nil
 }
 
@@ -161,35 +184,32 @@ func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) 
 	if err := database.DB.Model(&models.Rent{}).
 		Select("spot_id").
 		Where("(actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)", now, startOfDay, endOfDay).
-		Where("status NOT IN (?)", []string{"canceled"}). // 排除已取消的租約
+		Where("status NOT IN (?)", []string{"canceled"}).
 		Distinct().
 		Scan(&rentedSpotIDs).Error; err != nil {
 		log.Printf("Failed to query rented spot IDs: %v", err)
 		return nil, nil, fmt.Errorf("failed to query rented spot IDs: %w", err)
 	}
 
-	// 構建查詢
+	// 構建查詢，要求 parking_spot_available_day 必須有記錄，或者 status 為 available
 	query := database.DB.
 		Preload("Member").
 		Preload("Rents", "end_time >= ? OR actual_end_time IS NULL", now).
-		Joins("LEFT JOIN parking_spot_available_day pad ON parking_spot.spot_id = pad.parking_spot_id AND pad.available_date = ? AND pad.is_available = ?", date, true).
+		Joins("JOIN parking_spot_available_day pad ON parking_spot.spot_id = pad.parking_spot_id AND pad.available_date = ? AND pad.is_available = ?", date, true).
 		Where("parking_spot.status = ?", "available").
 		Where("parking_spot.latitude != 0 AND parking_spot.longitude != 0").
 		Where(distanceSQL+" <= ?", latitude, longitude, latitude, radius)
 
-	// 添加租賃過濾條件
 	if len(rentedSpotIDs) > 0 {
 		query = query.Where("parking_spot.spot_id NOT IN (?)", rentedSpotIDs)
 	}
 
-	// 執行查詢
 	err = query.Find(&spots).Error
 	if err != nil {
 		log.Printf("Failed to query available parking spots: %v", err)
 		return nil, nil, fmt.Errorf("failed to query available parking spots: %w", err)
 	}
 
-	// 如果沒有找到任何停車位，返回空陣列
 	if len(spots) == 0 {
 		return spots, nil, nil
 	}
@@ -259,11 +279,21 @@ func UpdateParkingSpot(id int, updatedFields map[string]interface{}) error {
 	var spot models.ParkingSpot
 	if err := database.DB.First(&spot, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("Parking spot with ID %d not found", id)
 			return fmt.Errorf("parking spot with ID %d not found", id)
 		}
-		log.Printf("Failed to find parking spot with ID %d: %v", id, err)
 		return fmt.Errorf("failed to find parking spot with ID %d: %w", id, err)
+	}
+
+	// 檢查租賃狀態並更新 status
+	var activeRents []models.Rent
+	if err := database.DB.Where("spot_id = ? AND actual_end_time IS NULL", id).Find(&activeRents).Error; err != nil {
+		log.Printf("Failed to check active rents for spot %d: %v", id, err)
+		return fmt.Errorf("failed to check active rents: %w", err)
+	}
+	if len(activeRents) > 0 {
+		updatedFields["status"] = "occupied"
+	} else {
+		updatedFields["status"] = "available"
 	}
 
 	// 權限檢查移至處理器層，服務層僅處理更新邏輯

@@ -70,6 +70,7 @@ func ShareParkingSpot(c *gin.Context) {
 		return
 	}
 
+	// 初始化 ParkingSpot，初始 status 根據 available_days 決定
 	spot := &models.ParkingSpot{
 		MemberID:         input.MemberID,
 		ParkingType:      input.ParkingType,
@@ -80,14 +81,16 @@ func ShareParkingSpot(c *gin.Context) {
 		DailyMaxPrice:    input.DailyMaxPrice,
 		Longitude:        input.Longitude,
 		Latitude:         input.Latitude,
-		Status:           "available",
 	}
+	// 預設 status 為 "available"，後續由 services 層根據 available_days 更新
+	spot.Status = "available"
 
+	// 轉換 availableDays
 	availableDays := make([]models.ParkingSpotAvailableDay, len(input.AvailableDays))
 	for i, day := range input.AvailableDays {
 		parsedDate, err := time.Parse("2006-01-02", day.Date)
 		if err != nil {
-			log.Printf("Invalid date format for available_days: %v", err)
+			log.Printf("Invalid date format for available_days at index %d: %v", i, err)
 			ErrorResponse(c, http.StatusBadRequest, "無效的日期格式", "date must be in YYYY-MM-DD format")
 			return
 		}
@@ -97,12 +100,14 @@ func ShareParkingSpot(c *gin.Context) {
 		}
 	}
 
+	// 調用服務層共享車位
 	if err := services.ShareParkingSpot(spot, availableDays); err != nil {
 		log.Printf("Failed to share parking spot for member %d: %v", input.MemberID, err)
 		ErrorResponse(c, http.StatusInternalServerError, "儲存車位失敗", err.Error())
 		return
 	}
 
+	// 刷新車位數據
 	refreshedSpot, availableDaysFetched, err := services.GetParkingSpotByID(spot.SpotID)
 	if err != nil {
 		log.Printf("Failed to refresh parking spot with ID %d: %v", spot.SpotID, err)
@@ -110,12 +115,14 @@ func ShareParkingSpot(c *gin.Context) {
 		return
 	}
 
+	// 查詢相關租賃記錄
 	var rents []models.Rent
 	if err := database.DB.Where("spot_id = ?", refreshedSpot.SpotID).Find(&rents).Error; err != nil {
 		log.Printf("Failed to fetch rents for spot %d: %v", refreshedSpot.SpotID, err)
 		rents = []models.Rent{}
 	}
 
+	// 回應成功
 	SuccessResponse(c, http.StatusOK, "車位共享成功", refreshedSpot.ToResponse(availableDaysFetched, rents))
 }
 

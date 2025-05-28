@@ -180,7 +180,7 @@ func GetAvailableParkingSpots(date string, latitude, longitude, radius float64) 
 	if err := database.DB.Model(&models.Rent{}).
 		Select("spot_id").
 		Where("(actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)", now, startOfDay, endOfDay).
-		Where("status NOT IN (?)", []string{"canceled"}).
+		Where("status NOT IN (?, ?)", "canceled", "completed"). // 加入 completed
 		Distinct().
 		Scan(&rentedSpotIDs).Error; err != nil {
 		log.Printf("Failed to query rented spot IDs: %v", err)
@@ -655,7 +655,7 @@ func SyncParkingSpotStatus() error {
 	now := time.Now().UTC()
 	for _, spot := range spots {
 		var activeRents []models.Rent
-		if err := database.DB.Where("spot_id = ? AND ((actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)) AND status NOT IN ('canceled')", spot.SpotID, now, now, now).Find(&activeRents).Error; err != nil {
+		if err := database.DB.Where("spot_id = ? AND ((actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)) AND status NOT IN ('canceled', 'completed')", spot.SpotID, now, now, now).Find(&activeRents).Error; err != nil {
 			log.Printf("Failed to fetch active rents for spot %d: %v", spot.SpotID, err)
 			continue
 		}

@@ -26,6 +26,11 @@ func parseTimeWithCST(timeStr string) (time.Time, error) {
 	// 嘗試解析 RFC 3339 格式（包含時區資訊）
 	t, err := time.Parse(time.RFC3339, timeStr)
 	if err == nil {
+		// 檢查時區是否為 +08:00（CST）或無時區（假設為 CST）
+		_, offset := t.Zone()
+		if offset != 8*60*60 && t.Location().String() != "Z" {
+			return time.Time{}, fmt.Errorf("time zone must be +08:00 or Z, got offset %d hours", offset/(60*60))
+		}
 		cstZone := time.FixedZone("CST", 8*60*60) // +08:00
 		log.Printf("Parsed RFC3339 time %s, converted to CST: %s", timeStr, t.In(cstZone).Format("2006-01-02T15:04:05"))
 		return t.In(cstZone), nil
@@ -856,6 +861,26 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
+	// 假設資料庫中的時間為 CST，設置時區
+	cstZone := time.FixedZone("CST", 8*60*60)
+	rent.StartTime = time.Date(
+		rent.StartTime.Year(), rent.StartTime.Month(), rent.StartTime.Day(),
+		rent.StartTime.Hour(), rent.StartTime.Minute(), rent.StartTime.Second(),
+		rent.StartTime.Nanosecond(), cstZone,
+	)
+	rent.EndTime = time.Date(
+		rent.EndTime.Year(), rent.EndTime.Month(), rent.EndTime.Day(),
+		rent.EndTime.Hour(), rent.EndTime.Minute(), rent.EndTime.Second(),
+		rent.EndTime.Nanosecond(), cstZone,
+	)
+	if rent.ActualEndTime != nil {
+		*rent.ActualEndTime = time.Date(
+			rent.ActualEndTime.Year(), rent.ActualEndTime.Month(), rent.ActualEndTime.Day(),
+			rent.ActualEndTime.Hour(), rent.ActualEndTime.Minute(), rent.ActualEndTime.Second(),
+			rent.ActualEndTime.Nanosecond(), cstZone,
+		)
+	}
+
 	if rent.ParkingSpot.SpotID == 0 {
 		log.Printf("ParkingSpot not found for rent ID %d, SpotID=%d", id, rent.SpotID)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -920,14 +945,16 @@ func LeaveAndPay(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無效的離開時間",
-			"error":   "actual_end_time must be in 'YYYY-MM-DDThh:mm:ss' or RFC 3339 format",
+			"error":   err.Error(),
 			"code":    "ERR_INVALID_TIME_FORMAT",
 		})
 		return
 	}
 
 	now := time.Now().In(time.FixedZone("CST", 8*60*60))
-	log.Printf("Received actual_end_time: %s, parsed as CST: %s, current CST time: %s", input.ActualEndTime, actualEndTime.Format("2006-01-02T15:04:05"), now.Format("2006-01-02T15:04:05"))
+	log.Printf("Received actual_end_time: %s, parsed as CST: %s, current CST time: %s, start_time: %s",
+		input.ActualEndTime, actualEndTime.Format("2006-01-02T15:04:05"),
+		now.Format("2006-01-02T15:04:05"), rent.StartTime.Format("2006-01-02T15:04:05"))
 
 	if actualEndTime.Before(rent.StartTime) {
 		log.Printf("Actual end time %v is before start time %v for rent ID %d", actualEndTime, rent.StartTime, id)
@@ -945,6 +972,16 @@ func LeaveAndPay(c *gin.Context) {
 			"status":  false,
 			"message": "無效的離開時間",
 			"error":   "actual_end_time cannot be earlier than current time",
+			"code":    "ERR_INVALID_TIME",
+		})
+		return
+	}
+	if actualEndTime.After(now) {
+		log.Printf("Actual end time %v is after current CST time %v for rent ID %d", actualEndTime, now, id)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的離開時間",
+			"error":   "actual_end_time cannot be later than current time",
 			"code":    "ERR_INVALID_TIME",
 		})
 		return

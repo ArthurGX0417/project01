@@ -14,46 +14,50 @@ import (
 
 // CalculateRentCost 統一計算租賃費用
 func CalculateRentCost(rent models.Rent, spot models.ParkingSpot, actualEndTime time.Time) (float64, error) {
-	// 確保時間為 UTC
-	rent.StartTime = rent.StartTime.UTC()
-	rent.EndTime = rent.EndTime.UTC()
-	actualEndTime = actualEndTime.UTC()
+	// 確保所有時間為 CST
+	rent.StartTime = rent.StartTime.In(time.FixedZone("CST", 8*60*60))
+	rent.EndTime = rent.EndTime.In(time.FixedZone("CST", 8*60*60))
+	actualEndTime = actualEndTime.In(time.FixedZone("CST", 8*60*60))
 
-	// 檢查 actual_end_time 是否早於 start_time
 	if actualEndTime.Before(rent.StartTime) {
+		log.Printf("actual_end_time %v is before start_time %v for rent_id %d", actualEndTime, rent.StartTime, rent.RentID)
 		return 0, fmt.Errorf("actual end time %v cannot be earlier than start time %v", actualEndTime, rent.StartTime)
 	}
 
-	// 計算停留時間和天數
+	if spot.PricePerHalfHour <= 0 || spot.DailyMaxPrice <= 0 {
+		return 0, fmt.Errorf("invalid pricing for spot_id %d: PricePerHalfHour=%.2f, DailyMaxPrice=%.2f", spot.SpotID, spot.PricePerHalfHour, spot.DailyMaxPrice)
+	}
+
 	durationMinutes := actualEndTime.Sub(rent.StartTime).Minutes()
 	durationDays := durationMinutes / (24 * 60)
 
 	var totalCost float64
-	// 5 分鐘內免費
 	if durationMinutes <= 5 {
 		totalCost = 0
 	} else {
-		// 僅按小時計價
 		halfHours := math.Floor(durationMinutes / 30)
 		remainingMinutes := durationMinutes - (halfHours * 30)
-		if remainingMinutes > 5 { // 超過 5 分鐘計入下一個半小時
+		if remainingMinutes > 5 {
 			halfHours++
 		}
 		totalCost = halfHours * spot.PricePerHalfHour
 
-		// 應用每日上限
 		if spot.DailyMaxPrice > 0 {
 			days := math.Ceil(durationDays)
 			maxCost := spot.DailyMaxPrice * days
 			totalCost = math.Min(totalCost, maxCost)
 		}
 
-		// 計算超時費用（2 倍小時價格）
 		overtimeMinutes := actualEndTime.Sub(rent.EndTime).Minutes()
 		if overtimeMinutes > 0 {
 			overtimeHalfHours := math.Ceil(overtimeMinutes / 30.0)
 			overtimeCost := overtimeHalfHours * (spot.PricePerHalfHour * 2)
 			totalCost += overtimeCost
+		}
+
+		if totalCost > spot.DailyMaxPrice*30 {
+			log.Printf("Abnormal total_cost %.2f for rent_id %d, capping at %.2f", totalCost, rent.RentID, spot.DailyMaxPrice*30)
+			totalCost = spot.DailyMaxPrice * 30
 		}
 	}
 

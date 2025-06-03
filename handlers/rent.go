@@ -3,7 +3,6 @@ package handlers
 import (
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"project01/database"
 	"project01/models"
@@ -22,20 +21,26 @@ type RentInput struct {
 	EndTime   string `json:"end_time" binding:"required"`
 }
 
-// parseTimeWithUTC 解析時間字符串並轉換為 UTC
-func parseTimeWithUTC(timeStr string) (time.Time, error) {
+// parseTimeWithCST 解析時間字符串並轉換為 CST
+func parseTimeWithCST(timeStr string) (time.Time, error) {
 	// 嘗試解析 RFC 3339 格式（包含時區資訊）
 	t, err := time.Parse(time.RFC3339, timeStr)
 	if err == nil {
-		// 已經包含時區，直接轉為 UTC
-		return t.UTC(), nil
+		_, offset := t.Zone()
+		if offset != 8*60*60 && t.Location().String() != "Z" {
+			return time.Time{}, fmt.Errorf("time zone must be +08:00 or Z, got offset %d", offset/(60*60))
+		}
+		cstZone := time.FixedZone("CST", 8*60*60) // +08:00
+		log.Printf("Parsed RFC3339 time %s, converted to CST: %s", timeStr, t.In(cstZone).Format("2006-01-02T15:04:05"))
+		return t.In(cstZone), nil
 	}
 
-	// 嘗試解析不帶時區的格式（假設為 UTC）
+	// 嘗試解析不帶時區的格式（假設為 CST）
 	t, err = time.Parse("2006-01-02T15:04:05", timeStr)
 	if err == nil {
-		// 假設默認時區為 UTC
-		return t.UTC(), nil
+		cstZone := time.FixedZone("CST", 8*60*60) // +08:00
+		log.Printf("Parsed time %s as CST: %s", timeStr, t.In(cstZone).Format("2006-01-02T15:04:05"))
+		return t.In(cstZone), nil
 	}
 
 	return time.Time{}, fmt.Errorf("time must be in 'YYYY-MM-DDThh:mm:ss' or RFC 3339 format")
@@ -55,8 +60,8 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	// 解析開始時間和結束時間
-	startTime, err := parseTimeWithUTC(input.StartTime)
+	// 解析開始時間和結束時間為 CST
+	startTime, err := parseTimeWithCST(input.StartTime)
 	if err != nil {
 		log.Printf("Failed to parse start_time %s: %v", input.StartTime, err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -68,7 +73,7 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	endTime, err := parseTimeWithUTC(input.EndTime)
+	endTime, err := parseTimeWithCST(input.EndTime)
 	if err != nil {
 		log.Printf("Failed to parse end_time %s: %v", input.EndTime, err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -104,12 +109,12 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	now := time.Now().UTC()
-	log.Printf("Current UTC time: %s, StartTime: %s", now.Format(time.RFC3339), startTime.Format(time.RFC3339))
+	now := time.Now().In(time.FixedZone("CST", 8*60*60))
+	log.Printf("Current CST time: %s, StartTime: %s", now.Format("2006-01-02T15:04:05"), startTime.Format("2006-01-02T15:04:05"))
 
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.FixedZone("CST", 8*60*60))
 	if startTime.Before(today) {
-		log.Printf("Start time %s is before today %s", startTime.Format(time.RFC3339), today.Format(time.RFC3339))
+		log.Printf("Start time %s is before today %s", startTime.Format("2006-01-02T15:04:05"), today.Format("2006-01-02T15:04:05"))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "開始時間必須在今天或未來",
@@ -120,7 +125,7 @@ func RentParkingSpot(c *gin.Context) {
 	}
 
 	if !endTime.After(startTime) {
-		log.Printf("End time %s is not after start time %s", endTime.Format(time.RFC3339), startTime.Format(time.RFC3339))
+		log.Printf("End time %s is not after start time %s", endTime.Format("2006-01-02T15:04:05"), startTime.Format("2006-01-02T15:04:05"))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "結束時間必須晚於開始時間",
@@ -147,7 +152,7 @@ func RentParkingSpot(c *gin.Context) {
 	for _, rent := range parkingSpot.Rents {
 		if rent.ActualEndTime == nil && rent.EndTime.After(now) {
 			hasActiveRent = true
-			log.Printf("Parking spot %d has an active rent: rent_id %d, end_time %s", input.SpotID, rent.RentID, rent.EndTime.Format(time.RFC3339))
+			log.Printf("Parking spot %d has an active rent: rent_id %d, end_time %s", input.SpotID, rent.RentID, rent.EndTime.Format("2006-01-02T15:04:05"))
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  false,
 				"message": "車位已被租用",
@@ -301,7 +306,7 @@ func ReserveParkingSpot(c *gin.Context) {
 	}
 
 	// 解析開始時間和結束時間
-	startTime, err := parseTimeWithUTC(input.StartTime)
+	startTime, err := parseTimeWithCST(input.StartTime)
 	if err != nil {
 		log.Printf("Failed to parse start_time %s: %v", input.StartTime, err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -313,7 +318,7 @@ func ReserveParkingSpot(c *gin.Context) {
 		return
 	}
 
-	endTime, err := parseTimeWithUTC(input.EndTime)
+	endTime, err := parseTimeWithCST(input.EndTime)
 	if err != nil {
 		log.Printf("Failed to parse end_time %s: %v", input.EndTime, err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -781,6 +786,55 @@ func LeaveAndPay(c *gin.Context) {
 			"status":  false,
 			"message": "無效的租賃 ID",
 			"error":   "invalid rent ID: must be a number",
+			"code":    "ERR_INVALID_ID",
+		})
+		return
+	}
+
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		log.Printf("Failed to get member_id from context")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "member_id not found in token",
+			"code":    "ERR_NO_MEMBER_ID",
+		})
+		return
+	}
+
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		log.Printf("Invalid member_id type in context")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "invalid member_id type",
+			"code":    "ERR_INVALID_MEMBER_ID",
+		})
+		return
+	}
+
+	role, exists := c.Get("role")
+	if !exists {
+		log.Printf("Failed to get role from context")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "role not found in token",
+			"code":    "ERR_NO_ROLE",
+		})
+		return
+	}
+
+	roleStr, ok := role.(string)
+	if !ok {
+		log.Printf("Invalid role type in context")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "invalid role type",
+			"code":    "ERR_INVALID_ROLE",
 		})
 		return
 	}
@@ -792,14 +846,38 @@ func LeaveAndPay(c *gin.Context) {
 				"status":  false,
 				"message": "租賃記錄不存在",
 				"error":   "record not found",
+				"code":    "ERR_NOT_FOUND",
 			})
 			return
 		}
-		log.Printf("Failed to get rent: %v", err)
+		log.Printf("Failed to get rent: rent_id=%d, error=%v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
 			"message": "結算失敗",
 			"error":   "failed to get rent record: database error",
+			"code":    "ERR_DATABASE",
+		})
+		return
+	}
+
+	if rent.ParkingSpot.SpotID == 0 {
+		log.Printf("ParkingSpot not found for rent ID %d, SpotID=%d", id, rent.SpotID)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "結算失敗",
+			"error":   "parking spot not found",
+			"code":    "ERR_NOT_FOUND",
+		})
+		return
+	}
+
+	if roleStr != "admin" && rent.MemberID != currentMemberIDInt {
+		log.Printf("Unauthorized attempt to settle rent ID %d by member %d", id, currentMemberIDInt)
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  false,
+			"message": "無權限",
+			"error":   "you can only settle your own rent",
+			"code":    "ERR_INSUFFICIENT_PERMISSIONS",
 		})
 		return
 	}
@@ -810,6 +888,18 @@ func LeaveAndPay(c *gin.Context) {
 			"status":  false,
 			"message": "無法結算",
 			"error":   "租賃已結束",
+			"code":    "ERR_ALREADY_SETTLED",
+		})
+		return
+	}
+
+	if rent.ParkingSpot.PricePerHalfHour <= 0 || rent.ParkingSpot.DailyMaxPrice <= 0 {
+		log.Printf("Invalid pricing for parking spot ID %d: PricePerHalfHour=%.2f, DailyMaxPrice=%.2f", rent.SpotID, rent.ParkingSpot.PricePerHalfHour, rent.ParkingSpot.DailyMaxPrice)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "結算失敗",
+			"error":   "invalid pricing data for parking spot",
+			"code":    "ERR_INVALID_PRICING",
 		})
 		return
 	}
@@ -823,103 +913,123 @@ func LeaveAndPay(c *gin.Context) {
 			"status":  false,
 			"message": "無效的輸入資料",
 			"error":   err.Error(),
+			"code":    "ERR_INVALID_INPUT",
 		})
 		return
 	}
 
-	actualEndTime, err := parseTimeWithUTC(input.ActualEndTime)
+	actualEndTime, err := parseTimeWithCST(input.ActualEndTime)
 	if err != nil {
 		log.Printf("Invalid actual_end_time format: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無效的離開時間",
 			"error":   "actual_end_time must be in 'YYYY-MM-DDThh:mm:ss' or RFC 3339 format",
+			"code":    "ERR_INVALID_TIME_FORMAT",
 		})
 		return
 	}
 
-	// 獲取當前 UTC 時間作為備用
-	now := time.Now().UTC()
+	now := time.Now().In(time.FixedZone("CST", 8*60*60))
+	log.Printf("Received actual_end_time: %s, parsed as CST: %s, current CST time: %s", input.ActualEndTime, actualEndTime.Format("2006-01-02T15:04:05"), now.Format("2006-01-02T15:04:05"))
 
-	// 檢查 actual_end_time 是否早於 start_time
 	if actualEndTime.Before(rent.StartTime) {
-		log.Printf("Actual end time %v is before start time %v for rent ID %d, using current UTC time %v instead", actualEndTime, rent.StartTime, id, now)
-		actualEndTime = now // 如果時間不合理，使用當前 UTC 時間
+		log.Printf("Actual end time %v is before start time %v for rent ID %d", actualEndTime, rent.StartTime, id)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的離開時間",
+			"error":   "actual_end_time cannot be earlier than start_time",
+			"code":    "ERR_INVALID_TIME",
+		})
+		return
 	}
-
-	// 確保 actual_end_time 不早於當前時間
 	if actualEndTime.Before(now) {
-		log.Printf("Actual end time %v is before current UTC time %v for rent ID %d, using current UTC time instead", actualEndTime, now, id)
-		actualEndTime = now
+		log.Printf("Actual end time %v is before current CST time %v for rent ID %d", actualEndTime, now, id)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  false,
+			"message": "無效的離開時間",
+			"error":   "actual_end_time cannot be earlier than current time",
+			"code":    "ERR_INVALID_TIME",
+		})
+		return
 	}
 
-	// 計算費用
-	var totalCost float64
-	durationMinutes := actualEndTime.Sub(rent.StartTime).Minutes()
-	durationDays := durationMinutes / (24 * 60)
-
-	// 檢查是否在 5 分鐘內，若是則免費
-	if durationMinutes <= 5 {
-		totalCost = 0
-	} else {
-		halfHours := math.Floor(durationMinutes / 30)
-		remainingMinutes := durationMinutes - (halfHours * 30)
-		if remainingMinutes > 5 {
-			halfHours++
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			log.Printf("Panic occurred: rent_id=%d, error=%v", id, r)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  false,
+				"message": "結算失敗",
+				"error":   "unexpected error occurred",
+				"code":    "ERR_PANIC",
+			})
 		}
-		totalCost = halfHours * rent.ParkingSpot.PricePerHalfHour
-		dailyMax := rent.ParkingSpot.DailyMaxPrice
-		days := math.Ceil(durationDays)
-		maxCost := dailyMax * days
-		totalCost = math.Min(totalCost, maxCost)
+	}()
+
+	totalCost, err := services.CalculateRentCost(rent, rent.ParkingSpot, actualEndTime)
+	if err != nil {
+		tx.Rollback()
+		log.Printf("Failed to calculate rent cost: rent_id=%d, error=%v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "結算失敗",
+			"error":   "failed to calculate rent cost: " + err.Error(),
+			"code":    "ERR_CALCULATION_FAILED",
+		})
+		return
 	}
+
+	log.Printf("Calculated cost for rent ID %d: total_cost=%.2f", id, totalCost)
 
 	rent.ActualEndTime = &actualEndTime
 	rent.TotalCost = totalCost
 	rent.Status = "completed"
-
-	if err := database.DB.Save(&rent).Error; err != nil {
-		log.Printf("Failed to update rent: %v", err)
+	if err := tx.Save(&rent).Error; err != nil {
+		tx.Rollback()
+		log.Printf("Failed to update rent: rent_id=%d, error=%v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
 			"message": "結算失敗",
 			"error":   "failed to update rent record: database error",
+			"code":    "ERR_DATABASE",
 		})
 		return
 	}
 
-	var activeRentCount int64
-	if err := database.DB.Model(&models.Rent{}).
-		Where("spot_id = ? AND actual_end_time IS NULL AND end_time >= ?", rent.SpotID, time.Now().UTC()).
-		Count(&activeRentCount).Error; err != nil {
-		log.Printf("Failed to check active rents for spot %d: %v", rent.SpotID, err)
-		activeRentCount = 0
+	newStatus, err := services.UpdateParkingSpotStatus(tx, rent.SpotID, now)
+	if err != nil {
+		tx.Rollback()
+		log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", rent.SpotID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "結算失敗",
+			"error":   "failed to update parking spot status: " + err.Error(),
+			"code":    "ERR_UPDATE_STATUS",
+		})
+		return
 	}
-
-	var isDayAvailable bool
-	todayStr := time.Now().UTC().Format("2006-01-02")
-	var availableDayCount int64
-	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}).
-		Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", rent.SpotID, todayStr, true).
-		Count(&availableDayCount).Error; err != nil {
-		log.Printf("Failed to check available days for spot %d: %v", rent.SpotID, err)
-	}
-	isDayAvailable = availableDayCount > 0
-
-	if activeRentCount > 0 {
-		rent.ParkingSpot.Status = "reserved"
-	} else if isDayAvailable {
-		rent.ParkingSpot.Status = "available"
-	} else {
-		rent.ParkingSpot.Status = "occupied"
-	}
-
-	if err := database.DB.Save(&rent.ParkingSpot).Error; err != nil {
-		log.Printf("Failed to update parking spot status for spot %d: %v", rent.ParkingSpot.SpotID, err)
+	rent.ParkingSpot.Status = newStatus
+	if err := tx.Save(&rent.ParkingSpot).Error; err != nil {
+		tx.Rollback()
+		log.Printf("Failed to update parking spot status in DB: spot_id=%d, error=%v", rent.ParkingSpot.SpotID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
 			"message": "結算失敗",
 			"error":   "failed to update parking spot status: database error",
+			"code":    "ERR_DATABASE",
+		})
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		log.Printf("Failed to commit transaction: rent_id=%d, error=%v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "結算失敗",
+			"error":   "failed to commit transaction: database error",
+			"code":    "ERR_DATABASE",
 		})
 		return
 	}
@@ -937,14 +1047,17 @@ func LeaveAndPay(c *gin.Context) {
 	}
 
 	if err := database.DB.Preload("Member").Preload("ParkingSpot").Preload("ParkingSpot.Member").First(&rent, id).Error; err != nil {
-		log.Printf("Failed to reload rent data: %v", err)
+		log.Printf("Failed to reload rent data: rent_id=%d, error=%v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
 			"message": "結算失敗",
 			"error":   "failed to reload rent data: database error",
+			"code":    "ERR_DATABASE",
 		})
 		return
 	}
+
+	log.Printf("Successfully processed leave and pay: rent_id=%d, total_cost=%.2f", id, totalCost)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  true,

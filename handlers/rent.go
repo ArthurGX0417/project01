@@ -26,10 +26,6 @@ func parseTimeWithCST(timeStr string) (time.Time, error) {
 	// 嘗試解析 RFC 3339 格式（包含時區資訊）
 	t, err := time.Parse(time.RFC3339, timeStr)
 	if err == nil {
-		_, offset := t.Zone()
-		if offset != 8*60*60 && t.Location().String() != "Z" {
-			return time.Time{}, fmt.Errorf("time zone must be +08:00 or Z, got offset %d", offset/(60*60))
-		}
 		cstZone := time.FixedZone("CST", 8*60*60) // +08:00
 		log.Printf("Parsed RFC3339 time %s, converted to CST: %s", timeStr, t.In(cstZone).Format("2006-01-02T15:04:05"))
 		return t.In(cstZone), nil

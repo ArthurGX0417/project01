@@ -22,19 +22,19 @@ type RentInput struct {
 	EndTime   string `json:"end_time" binding:"required"`
 }
 
-// parseTimeWithUTC 解析時間字符串並假設為 UTC
+// parseTimeWithUTC 解析時間字符串並轉換為 UTC
 func parseTimeWithUTC(timeStr string) (time.Time, error) {
-	// 嘗試解析不帶時區的格式
-	t, err := time.Parse("2006-01-02T15:04:05", timeStr)
+	// 嘗試解析 RFC 3339 格式（包含時區資訊）
+	t, err := time.Parse(time.RFC3339, timeStr)
 	if err == nil {
-		// 假設默認時區為 UTC
+		// 已經包含時區，直接轉為 UTC
 		return t.UTC(), nil
 	}
 
-	// 如果不帶時區的格式解析失敗，嘗試 RFC 3339 格式
-	t, err = time.Parse(time.RFC3339, timeStr)
+	// 嘗試解析不帶時區的格式（假設為 UTC）
+	t, err = time.Parse("2006-01-02T15:04:05", timeStr)
 	if err == nil {
-		// 已經包含時區，直接轉為 UTC
+		// 假設默認時區為 UTC
 		return t.UTC(), nil
 	}
 
@@ -838,14 +838,19 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
+	// 獲取當前 UTC 時間作為備用
+	now := time.Now().UTC()
+
+	// 檢查 actual_end_time 是否早於 start_time
 	if actualEndTime.Before(rent.StartTime) {
-		log.Printf("Actual end time %v is before start time %v for rent ID %d", actualEndTime, rent.StartTime, id)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  false,
-			"message": "無效的離開時間",
-			"error":   "離開時間必須晚於租賃開始時間",
-		})
-		return
+		log.Printf("Actual end time %v is before start time %v for rent ID %d, using current UTC time %v instead", actualEndTime, rent.StartTime, id, now)
+		actualEndTime = now // 如果時間不合理，使用當前 UTC 時間
+	}
+
+	// 確保 actual_end_time 不早於當前時間
+	if actualEndTime.Before(now) {
+		log.Printf("Actual end time %v is before current UTC time %v for rent ID %d, using current UTC time instead", actualEndTime, now, id)
+		actualEndTime = now
 	}
 
 	// 計算費用
@@ -857,10 +862,9 @@ func LeaveAndPay(c *gin.Context) {
 	if durationMinutes <= 5 {
 		totalCost = 0
 	} else {
-		// 僅保留按小時計價邏輯
 		halfHours := math.Floor(durationMinutes / 30)
 		remainingMinutes := durationMinutes - (halfHours * 30)
-		if remainingMinutes > 5 { // 超過 5 分鐘才計入下一個半小時
+		if remainingMinutes > 5 {
 			halfHours++
 		}
 		totalCost = halfHours * rent.ParkingSpot.PricePerHalfHour
@@ -872,7 +876,7 @@ func LeaveAndPay(c *gin.Context) {
 
 	rent.ActualEndTime = &actualEndTime
 	rent.TotalCost = totalCost
-	rent.Status = "completed" // 當租賃結算完成時
+	rent.Status = "completed"
 
 	if err := database.DB.Save(&rent).Error; err != nil {
 		log.Printf("Failed to update rent: %v", err)

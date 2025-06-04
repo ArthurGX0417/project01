@@ -442,7 +442,8 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 		Preload("Member").
 		Preload("ParkingSpot").
 		Preload("ParkingSpot.Member").
-		Where("status IN (?) AND (actual_end_time IS NULL OR actual_end_time > ?) AND end_time > ?", []string{"pending", "reserved"}, now, now)
+		Where("(status = ? AND (actual_end_time IS NULL OR actual_end_time > ?)) OR (status = ? AND (actual_end_time IS NULL OR actual_end_time > ?) AND end_time > ?)",
+			"pending", now, "reserved", now, now)
 
 	if role == "renter" {
 		query = query.Where("member_id = ?", memberID)

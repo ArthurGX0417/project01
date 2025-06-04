@@ -255,7 +255,7 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	parkingSpot.Status = "reserved"
+	parkingSpot.Status = "pending"
 	if err := database.DB.Save(&parkingSpot).Error; err != nil {
 		log.Printf("Failed to update parking spot status for spot %d: %v", parkingSpot.SpotID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -278,11 +278,8 @@ func RentParkingSpot(c *gin.Context) {
 		return
 	}
 
-	availableDays, err := services.FetchAvailableDays(rent.SpotID)
-	if err != nil {
-		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
-		availableDays = []models.ParkingSpotAvailableDay{}
-	}
+	// 移除 FetchAvailableDays 調用，直接使用空切片
+	availableDays := []models.ParkingSpotAvailableDay{}
 
 	var parkingSpotRents []models.Rent
 	if err := database.DB.Where("spot_id = ?", rent.SpotID).Find(&parkingSpotRents).Error; err != nil {
@@ -360,10 +357,10 @@ func ReserveParkingSpot(c *gin.Context) {
 		return
 	}
 
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	now := time.Now().In(time.FixedZone("CST", 8*60*60))
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.FixedZone("CST", 8*60*60))
 	if startTime.Before(today) {
-		log.Printf("Reservation start time %s is before today %s", startTime.Format(time.RFC3339), today.Format(time.RFC3339))
+		log.Printf("Reservation start time %s is before today %s", startTime.Format("2006-01-02T15:04:05"), today.Format("2006-01-02T15:04:05"))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "開始時間必須在今天或未來",
@@ -374,7 +371,7 @@ func ReserveParkingSpot(c *gin.Context) {
 	}
 
 	if !endTime.After(startTime) {
-		log.Printf("Reservation end time %s is not after start time %s", endTime.Format(time.RFC3339), startTime.Format(time.RFC3339))
+		log.Printf("Reservation end time %s is not after start time %s", endTime.Format("2006-01-02T15:04:05"), startTime.Format("2006-01-02T15:04:05"))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "結束時間必須晚於開始時間",
@@ -479,11 +476,8 @@ func ReserveParkingSpot(c *gin.Context) {
 		return
 	}
 
-	availableDays, err := services.FetchAvailableDays(reservation.SpotID)
-	if err != nil {
-		log.Printf("Error fetching available days for spot %d: %v", reservation.SpotID, err)
-		availableDays = []models.ParkingSpotAvailableDay{}
-	}
+	// 移除 FetchAvailableDays 調用，直接使用空切片
+	availableDays := []models.ParkingSpotAvailableDay{}
 
 	var parkingSpotRents []models.Rent
 	if err := database.DB.Where("spot_id = ?", reservation.SpotID).Find(&parkingSpotRents).Error; err != nil {
@@ -601,11 +595,8 @@ func GetMemberRentHistory(c *gin.Context) {
 	// 轉換為回應格式
 	rentResponses := make([]models.RentResponse, len(rents))
 	for i, rent := range rents {
-		availableDays, err := services.FetchAvailableDays(rent.SpotID)
-		if err != nil {
-			log.Printf("Failed to fetch available days: spot_id=%d, error=%v", rent.SpotID, err)
-			availableDays = []models.ParkingSpotAvailableDay{}
-		}
+		// 移除 FetchAvailableDays 調用，直接使用空切片
+		availableDays := []models.ParkingSpotAvailableDay{}
 
 		var parkingSpotRents []models.Rent
 		if err := database.DB.Where("spot_id = ?", rent.SpotID).Find(&parkingSpotRents).Error; err != nil {
@@ -738,8 +729,9 @@ func CancelRent(c *gin.Context) {
 
 	// 檢查是否有其他未結束的租賃或預約
 	var activeRentCount int64
+	now := time.Now().In(time.FixedZone("CST", 8*60*60))
 	if err := database.DB.Model(&models.Rent{}).
-		Where("spot_id = ? AND status IN (?, ?) AND end_time >= ?", rent.SpotID, "pending", "reserved", time.Now().UTC()).
+		Where("spot_id = ? AND status IN (?, ?) AND end_time >= ?", rent.SpotID, "pending", "reserved", now).
 		Count(&activeRentCount).Error; err != nil {
 		log.Printf("Failed to check active rents for spot %d: %v", rent.SpotID, err)
 		activeRentCount = 0
@@ -747,7 +739,7 @@ func CancelRent(c *gin.Context) {
 
 	// 檢查當天的可用性
 	var isDayAvailable bool
-	todayStr := time.Now().UTC().Format("2006-01-02")
+	todayStr := now.Format("2006-01-02")
 	var availableDayCount int64
 	if err := database.DB.Model(&models.ParkingSpotAvailableDay{}).
 		Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", rent.SpotID, todayStr, true).
@@ -868,22 +860,10 @@ func LeaveAndPay(c *gin.Context) {
 
 	// 假設資料庫中的時間為 CST，設置時區
 	cstZone := time.FixedZone("CST", 8*60*60)
-	rent.StartTime = time.Date(
-		rent.StartTime.Year(), rent.StartTime.Month(), rent.StartTime.Day(),
-		rent.StartTime.Hour(), rent.StartTime.Minute(), rent.StartTime.Second(),
-		rent.StartTime.Nanosecond(), cstZone,
-	)
-	rent.EndTime = time.Date(
-		rent.EndTime.Year(), rent.EndTime.Month(), rent.EndTime.Day(),
-		rent.EndTime.Hour(), rent.EndTime.Minute(), rent.EndTime.Second(),
-		rent.EndTime.Nanosecond(), cstZone,
-	)
+	rent.StartTime = rent.StartTime.In(cstZone)
+	rent.EndTime = rent.EndTime.In(cstZone)
 	if rent.ActualEndTime != nil {
-		*rent.ActualEndTime = time.Date(
-			rent.ActualEndTime.Year(), rent.ActualEndTime.Month(), rent.ActualEndTime.Day(),
-			rent.ActualEndTime.Hour(), rent.ActualEndTime.Minute(), rent.ActualEndTime.Second(),
-			rent.ActualEndTime.Nanosecond(), cstZone,
-		)
+		*rent.ActualEndTime = rent.ActualEndTime.In(cstZone)
 	}
 
 	if rent.ParkingSpot.SpotID == 0 {
@@ -1039,7 +1019,7 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	newStatus, err := services.UpdateParkingSpotStatus(tx, rent.SpotID, now)
+	newStatus, err := services.UpdateParkingSpotStatus(tx, rent.SpotID, now, cstZone)
 	if err != nil {
 		tx.Rollback()
 		log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", rent.SpotID, err)
@@ -1075,11 +1055,8 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	availableDays, err := services.FetchAvailableDays(rent.SpotID)
-	if err != nil {
-		log.Printf("Error fetching available days for spot %d: %v", rent.SpotID, err)
-		availableDays = []models.ParkingSpotAvailableDay{}
-	}
+	// 移除 FetchAvailableDays 調用，直接使用空切片
+	availableDays := []models.ParkingSpotAvailableDay{}
 
 	var parkingSpotRents []models.Rent
 	if err := database.DB.Where("spot_id = ?", rent.SpotID).Find(&parkingSpotRents).Error; err != nil {
@@ -1153,6 +1130,7 @@ func GetRentByID(c *gin.Context) {
 		parkingSpotRents = []models.Rent{}
 	}
 
+	// 移除 FetchAvailableDays 調用，直接使用返回的 availableDays
 	SuccessResponse(c, http.StatusOK, "查詢成功", rent.ToResponse(availableDays, parkingSpotRents))
 }
 
@@ -1194,7 +1172,7 @@ func ConfirmReservation(c *gin.Context) {
 		return
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().In(time.FixedZone("CST", 8*60*60))
 	if now.Before(rent.StartTime) {
 		log.Printf("Cannot confirm reservation ID %d before start time", id)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -1237,22 +1215,10 @@ func GetCurrentlyRentedSpots(c *gin.Context) {
 		return
 	}
 
-	now := time.Now().UTC()
 	rentResponses := make([]models.RentResponse, len(rents))
 	for i, rent := range rents {
-		availableDays, err := services.FetchAvailableDays(rent.SpotID)
-		if err != nil {
-			log.Printf("Failed to fetch available days for spot %d: error=%v", rent.SpotID, err)
-			availableDays = []models.ParkingSpotAvailableDay{}
-		}
-
-		// 過濾掉過去的日期
-		filteredAvailableDays := []models.ParkingSpotAvailableDay{}
-		for _, day := range availableDays {
-			if day.AvailableDate.After(now) || day.AvailableDate.Equal(now) {
-				filteredAvailableDays = append(filteredAvailableDays, day)
-			}
-		}
+		// 移除 FetchAvailableDays 調用，直接使用空切片
+		availableDays := []models.ParkingSpotAvailableDay{}
 
 		var parkingSpotRents []models.Rent
 		if err := database.DB.Where("spot_id = ?", rent.SpotID).Find(&parkingSpotRents).Error; err != nil {
@@ -1260,7 +1226,7 @@ func GetCurrentlyRentedSpots(c *gin.Context) {
 			parkingSpotRents = []models.Rent{}
 		}
 
-		rentResponses[i] = rent.ToResponse(filteredAvailableDays, parkingSpotRents)
+		rentResponses[i] = rent.ToResponse(availableDays, parkingSpotRents)
 	}
 
 	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)

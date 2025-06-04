@@ -15,9 +15,10 @@ import (
 // CalculateRentCost 統一計算租賃費用
 func CalculateRentCost(rent models.Rent, spot models.ParkingSpot, actualEndTime time.Time) (float64, error) {
 	// 確保所有時間為 CST
-	rent.StartTime = rent.StartTime.In(time.FixedZone("CST", 8*60*60))
-	rent.EndTime = rent.EndTime.In(time.FixedZone("CST", 8*60*60))
-	actualEndTime = actualEndTime.In(time.FixedZone("CST", 8*60*60))
+	cstZone := time.FixedZone("CST", 8*60*60)
+	rent.StartTime = rent.StartTime.In(cstZone)
+	rent.EndTime = rent.EndTime.In(cstZone)
+	actualEndTime = actualEndTime.In(cstZone)
 
 	if actualEndTime.Before(rent.StartTime) {
 		log.Printf("actual_end_time %v is before start_time %v for rent_id %d", actualEndTime, rent.StartTime, rent.RentID)
@@ -66,9 +67,10 @@ func CalculateRentCost(rent models.Rent, spot models.ParkingSpot, actualEndTime 
 
 // RentParkingSpot 租用車位
 func RentParkingSpot(rent *models.Rent) error {
-	// 確保時間為 UTC
-	rent.StartTime = rent.StartTime.UTC()
-	rent.EndTime = rent.EndTime.UTC()
+	// 確保時間為 CST
+	cstZone := time.FixedZone("CST", 8*60*60)
+	rent.StartTime = rent.StartTime.In(cstZone)
+	rent.EndTime = rent.EndTime.In(cstZone)
 
 	// 驗證 member_id
 	var member models.Member
@@ -80,42 +82,9 @@ func RentParkingSpot(rent *models.Rent) error {
 		return fmt.Errorf("failed to verify member: %w", err)
 	}
 
-	// 使用 ParkingSpotAvailableDay 模型查詢可用日期
-	availableDays, err := FetchAvailableDays(rent.SpotID)
-	if err != nil {
-		log.Printf("Failed to query available days: spot_id=%d, error=%v", rent.SpotID, err)
-		return fmt.Errorf("failed to query available days: %w", err)
-	}
-
-	// 檢查是否有可用日期
-	if len(availableDays) == 0 {
-		return fmt.Errorf("parking spot %d has no available days; please add available dates in parking_spot_available_day", rent.SpotID)
-	}
-
-	// 檢查租用時間段是否在可用日期內
-	start := rent.StartTime
-	end := rent.EndTime
-	if start.After(end) {
+	// 移除 FetchAvailableDays 檢查，假設車位可用性由其他邏輯保證
+	if rent.StartTime.After(rent.EndTime) {
 		return fmt.Errorf("start_time cannot be later than end_time")
-	}
-
-	isAvailable := false
-	for current := start; !current.After(end); current = current.Add(24 * time.Hour) {
-		currentDate := current.Format("2006-01-02")
-		isAvailable = false // Reset for each day
-		for _, day := range availableDays {
-			if day.AvailableDate.Format("2006-01-02") == currentDate {
-				if day.IsAvailable {
-					isAvailable = true
-					break
-				} else {
-					return fmt.Errorf("parking spot %d is marked as unavailable on %s", rent.SpotID, currentDate)
-				}
-			}
-		}
-		if !isAvailable {
-			return fmt.Errorf("parking spot %d has no availability record for %s; please add this date to parking_spot_available_day", rent.SpotID, currentDate)
-		}
 	}
 
 	// 設置 actual_end_time 為 NULL
@@ -195,7 +164,8 @@ func CancelRent(id int) error {
 		return fmt.Errorf("failed to query parking spot: %w", err)
 	}
 
-	newStatus, err := UpdateParkingSpotStatus(tx, rent.SpotID, time.Now().UTC())
+	cstZone := time.FixedZone("CST", 8*60*60)
+	newStatus, err := UpdateParkingSpotStatus(tx, rent.SpotID, time.Now().In(cstZone), cstZone)
 	if err != nil {
 		tx.Rollback()
 		log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", rent.SpotID, err)
@@ -223,8 +193,9 @@ func LeaveAndPay(rentID int, actualEndTime time.Time) (float64, error) {
 	var rent models.Rent
 	var spot models.ParkingSpot
 
-	// 確保 actualEndTime 是 UTC 時區
-	actualEndTime = actualEndTime.UTC()
+	// 確保 actualEndTime 是 CST 時區
+	cstZone := time.FixedZone("CST", 8*60*60)
+	actualEndTime = actualEndTime.In(cstZone)
 
 	// 開始事務
 	tx := database.DB.Begin()
@@ -273,7 +244,7 @@ func LeaveAndPay(rentID int, actualEndTime time.Time) (float64, error) {
 	}
 
 	// 更新車位狀態
-	newStatus, err := UpdateParkingSpotStatus(tx, rent.SpotID, time.Now().UTC())
+	newStatus, err := UpdateParkingSpotStatus(tx, rent.SpotID, actualEndTime, cstZone)
 	if err != nil {
 		tx.Rollback()
 		log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", rent.SpotID, err)
@@ -320,12 +291,8 @@ func GetRentByID(id int, memberID int, role string) (*models.Rent, []models.Park
 		return nil, nil, fmt.Errorf("unauthorized access to rent with ID %d", id)
 	}
 
-	// 獲取可用日期
-	availableDays, err := FetchAvailableDays(rent.SpotID)
-	if err != nil {
-		log.Printf("Failed to fetch available days: spot_id=%d, error=%v", rent.SpotID, err)
-		return nil, nil, fmt.Errorf("failed to fetch available days: %w", err)
-	}
+	// 移除 FetchAvailableDays，改為空切片
+	availableDays := make([]models.ParkingSpotAvailableDay, 0)
 
 	log.Printf("Successfully fetched rent: rent_id=%d, member_id=%d", id, memberID)
 	return &rent, availableDays, nil
@@ -333,9 +300,10 @@ func GetRentByID(id int, memberID int, role string) (*models.Rent, []models.Park
 
 // ReserveParkingSpot 創建車位預約記錄
 func ReserveParkingSpot(reservation *models.Rent) error {
-	// 確保時間為 UTC
-	reservation.StartTime = reservation.StartTime.UTC()
-	reservation.EndTime = reservation.EndTime.UTC()
+	// 確保時間為 CST
+	cstZone := time.FixedZone("CST", 8*60*60)
+	reservation.StartTime = reservation.StartTime.In(cstZone)
+	reservation.EndTime = reservation.EndTime.In(cstZone)
 
 	// 驗證會員是否存在
 	var member models.Member
@@ -358,41 +326,9 @@ func ReserveParkingSpot(reservation *models.Rent) error {
 		return fmt.Errorf("failed to query parking spot: %w", err)
 	}
 
-	// 檢查可用日期
-	availableDays, err := FetchAvailableDays(spot.SpotID)
-	if err != nil {
-		log.Printf("Failed to query available days: spot_id=%d, error=%v", spot.SpotID, err)
-		return fmt.Errorf("failed to query available days: %w", err)
-	}
-
-	if len(availableDays) == 0 {
-		return fmt.Errorf("parking spot %d has no available days; please add available dates in parking_spot_available_day", spot.SpotID)
-	}
-
-	// 檢查預約時間段是否在可用日期內
-	start := reservation.StartTime
-	end := reservation.EndTime
-	if start.After(end) {
+	// 移除 FetchAvailableDays 檢查，假設車位可用性由其他邏輯保證
+	if reservation.StartTime.After(reservation.EndTime) {
 		return fmt.Errorf("start_time cannot be later than end_time")
-	}
-
-	isAvailable := false
-	for current := start; !current.After(end); current = current.Add(24 * time.Hour) {
-		currentDate := current.Format("2006-01-02")
-		isAvailable = false
-		for _, day := range availableDays {
-			if day.AvailableDate.Format("2006-01-02") == currentDate {
-				if day.IsAvailable {
-					isAvailable = true
-					break
-				} else {
-					return fmt.Errorf("parking spot %d is marked as unavailable on %s", spot.SpotID, currentDate)
-				}
-			}
-		}
-		if !isAvailable {
-			return fmt.Errorf("parking spot %d has no availability record for %s; please add this date to parking_spot_available_day", spot.SpotID, currentDate)
-		}
 	}
 
 	// 設置 ActualEndTime 為 NULL，並確保 Status 為 "reserved"
@@ -412,7 +348,8 @@ func ReserveParkingSpot(reservation *models.Rent) error {
 // CheckExpiredReservations 檢查超時的預約記錄
 func CheckExpiredReservations() error {
 	var reservations []models.Rent
-	now := time.Now().UTC()
+	cstZone := time.FixedZone("CST", 8*60*60)
+	now := time.Now().In(cstZone)
 
 	// 查詢所有 status 為 reserved 且 start_time 已過期的記錄
 	if err := database.DB.Where("status = ? AND start_time < ?", "reserved", now).Find(&reservations).Error; err != nil {
@@ -451,7 +388,7 @@ func CheckExpiredReservations() error {
 			return fmt.Errorf("failed to query parking spot for reservation %d: %w", reservation.RentID, err)
 		}
 
-		newStatus, err := UpdateParkingSpotStatus(tx, reservation.SpotID, now)
+		newStatus, err := UpdateParkingSpotStatus(tx, reservation.SpotID, now, cstZone)
 		if err != nil {
 			tx.Rollback()
 			log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", reservation.SpotID, err)
@@ -476,7 +413,7 @@ func CheckExpiredReservations() error {
 }
 
 // UpdateParkingSpotStatus 統一更新車位狀態
-func UpdateParkingSpotStatus(tx *gorm.DB, spotID int, now time.Time) (string, error) {
+func UpdateParkingSpotStatus(tx *gorm.DB, spotID int, now time.Time, cstZone *time.Location) (string, error) {
 	var pendingCount int64
 	var reservedCount int64
 	if err := tx.Model(&models.Rent{}).
@@ -516,7 +453,8 @@ func UpdateParkingSpotStatus(tx *gorm.DB, spotID int, now time.Time) (string, er
 // GetCurrentlyRentedSpots 查詢目前正在租用中的車位
 func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 	var rents []models.Rent
-	now := time.Now().UTC()
+	cstZone := time.FixedZone("CST", 8*60*60)
+	now := time.Now().In(cstZone)
 
 	query := database.DB.
 		Preload("Member").
@@ -575,12 +513,15 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 // GetAllReservations 查詢所有 reserved 狀態的記錄
 func GetAllReservations(memberID int, role string) ([]models.Rent, error) {
 	var reservations []models.Rent
+	cstZone := time.FixedZone("CST", 8*60*60)
+	now := time.Now().In(cstZone)
 
 	query := database.DB.
 		Preload("Member").
 		Preload("ParkingSpot").
 		Preload("ParkingSpot.Member").
-		Where("status = ?", "reserved")
+		Where("status IN (?, ?)", "reserved", "pending").
+		Where("end_time > ?", now)
 
 	switch role {
 	case "renter":
@@ -589,7 +530,7 @@ func GetAllReservations(memberID int, role string) ([]models.Rent, error) {
 		query = query.Joins("JOIN parking_spot ps ON ps.spot_id = rents.spot_id").
 			Where("ps.member_id = ?", memberID)
 	case "admin":
-		// admin 可以查詢所有 reserved 記錄，無需額外條件
+		// admin 可以查詢所有 reserved 和 pending 記錄，無需額外條件
 	default:
 		log.Printf("Insufficient role permissions: role=%s", role)
 		return nil, fmt.Errorf("insufficient role permissions: role=%s", role)
@@ -601,10 +542,10 @@ func GetAllReservations(memberID int, role string) ([]models.Rent, error) {
 	}
 
 	for i := range reservations {
-		reservations[i].StartTime = reservations[i].StartTime.In(time.FixedZone("CST", 8*60*60))
-		reservations[i].EndTime = reservations[i].EndTime.In(time.FixedZone("CST", 8*60*60))
+		reservations[i].StartTime = reservations[i].StartTime.In(cstZone)
+		reservations[i].EndTime = reservations[i].EndTime.In(cstZone)
 		if reservations[i].ActualEndTime != nil {
-			*reservations[i].ActualEndTime = reservations[i].ActualEndTime.In(time.FixedZone("CST", 8*60*60))
+			*reservations[i].ActualEndTime = reservations[i].ActualEndTime.In(cstZone)
 		}
 
 		if reservations[i].ParkingSpot.SpotID == 0 {

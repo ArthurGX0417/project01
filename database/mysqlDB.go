@@ -84,15 +84,28 @@ func InitDB() {
 	}
 	log.Printf("Connected to database: %s", dbName)
 
-	// 添加自動遷移，禁用外鍵約束和欄位修改
+	// 自定義遷移邏輯，避免修改現有欄位
 	migrator := DB.Migrator()
-	if err := migrator.AutoMigrate(
+	modelsToMigrate := []interface{}{
 		&models.Member{},
 		&models.ParkingSpot{},
 		&models.ParkingSpotAvailableDay{},
 		&models.Rent{},
-	); err != nil {
-		log.Fatalf("Failed to auto-migrate database: %v", err)
+	}
+
+	for _, model := range modelsToMigrate {
+		// 檢查表是否存在
+		if !migrator.HasTable(model) {
+			// 表不存在，創建新表
+			if err := migrator.CreateTable(model); err != nil {
+				log.Fatalf("Failed to create table for model %T: %v", model, err)
+			}
+		} else {
+			// 表存在，只添加缺少的欄位，不修改現有欄位
+			if err := migrator.AutoMigrate(model); err != nil {
+				log.Fatalf("Failed to auto-migrate model %T: %v", model, err)
+			}
+		}
 	}
 
 	log.Println("Database initialized successfully with GORM")

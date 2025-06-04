@@ -47,6 +47,7 @@ func InitDB() {
 			NamingStrategy: schema.NamingStrategy{
 				SingularTable: true, // 設置為 true，確保使用單數表名
 			},
+			DisableForeignKeyConstraintWhenMigrating: true, // 禁用外鍵約束檢查
 		})
 		if err == nil {
 			break
@@ -83,8 +84,9 @@ func InitDB() {
 	}
 	log.Printf("Connected to database: %s", dbName)
 
-	// 添加自動遷移並檢查錯誤
-	if err := DB.AutoMigrate(
+	// 添加自動遷移，禁用外鍵約束和欄位修改
+	migrator := DB.Migrator()
+	if err := migrator.AutoMigrate(
 		&models.Member{},
 		&models.ParkingSpot{},
 		&models.ParkingSpotAvailableDay{},

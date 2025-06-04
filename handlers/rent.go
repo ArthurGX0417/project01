@@ -971,12 +971,15 @@ func LeaveAndPay(c *gin.Context) {
 		})
 		return
 	}
-	if actualEndTime.Before(now) {
-		log.Printf("Actual end time %v is before current CST time %v for rent ID %d", actualEndTime, now, id)
+
+	// 放寬檢查，允許 actual_end_time 比 now 早 5 秒
+	const timeTolerance = 5 * time.Second
+	if actualEndTime.Before(now.Add(-timeTolerance)) {
+		log.Printf("Actual end time %v is too early compared to current CST time %v (tolerance: %v) for rent ID %d", actualEndTime, now, timeTolerance, id)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無效的離開時間",
-			"error":   "actual_end_time cannot be earlier than current time",
+			"error":   "actual_end_time is too early compared to current time",
 			"code":    "ERR_INVALID_TIME",
 		})
 		return

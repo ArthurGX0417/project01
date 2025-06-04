@@ -855,7 +855,7 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 資料庫時間是 UTC，轉換為 CST 用於處理
+	// 資料庫時間是 UTC，轉換為 CST 用於日誌顯示
 	cstZone := time.FixedZone("CST", 8*60*60)
 	rentStartTimeCST := rent.StartTime.In(cstZone)
 	var rentActualEndTimeCST *time.Time
@@ -936,14 +936,14 @@ func LeaveAndPay(c *gin.Context) {
 
 	// 當前時間使用 CST
 	now := time.Now().In(cstZone)
-	actualEndTime = actualEndTime.In(cstZone) // 轉為 CST
-	log.Printf("Received actual_end_time: %s, parsed as CST: %s, current CST time: %s, start_time (CST): %s",
+	nowUTC := now.UTC() // 將當前時間轉為 UTC 進行比較
+	log.Printf("Received actual_end_time: %s, parsed as UTC: %s, current CST time: %s, start_time (CST): %s",
 		input.ActualEndTime, actualEndTime.Format("2006-01-02T15:04:05"),
 		now.Format("2006-01-02T15:04:05"), rentStartTimeCST.Format("2006-01-02T15:04:05"))
 
-	// 比較時使用 CST 時間
-	if actualEndTime.Before(rentStartTimeCST) {
-		log.Printf("Actual end time %v is before start time %v for rent ID %d", actualEndTime, rentStartTimeCST, id)
+	// 比較時使用 UTC 時間
+	if actualEndTime.Before(rent.StartTime) {
+		log.Printf("Actual end time %v is before start time %v for rent ID %d", actualEndTime, rent.StartTime, id)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無效的離開時間",
@@ -955,8 +955,8 @@ func LeaveAndPay(c *gin.Context) {
 
 	// 放寬檢查，允許 actual_end_time 比 now 早 5 秒或等於 now
 	const timeTolerance = 5 * time.Second
-	if actualEndTime.After(now.Add(timeTolerance)) {
-		log.Printf("Actual end time %v is after current CST time %v (tolerance: %v) for rent ID %d", actualEndTime, now, timeTolerance, id)
+	if actualEndTime.After(nowUTC.Add(timeTolerance)) {
+		log.Printf("Actual end time %v is after current UTC time %v (tolerance: %v) for rent ID %d", actualEndTime, nowUTC, timeTolerance, id)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無效的離開時間",
@@ -980,7 +980,7 @@ func LeaveAndPay(c *gin.Context) {
 		}
 	}()
 
-	// 費用計算使用 UTC 時間，但結果應與 CST 時間一致
+	// 費用計算使用 UTC 時間
 	totalCost, err := services.CalculateRentCost(rent, rent.ParkingSpot, actualEndTime)
 	if err != nil {
 		tx.Rollback()
@@ -1048,9 +1048,7 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 移除 FetchAvailableDays 調用，直接使用空切片
 	availableDays := []models.ParkingSpotAvailableDay{}
-
 	var parkingSpotRents []models.Rent
 	if err := database.DB.Where("spot_id = ?", rent.SpotID).Find(&parkingSpotRents).Error; err != nil {
 		log.Printf("Failed to fetch rents for spot %d: %v", rent.SpotID, err)

@@ -356,7 +356,7 @@ func Path(router *gin.RouterGroup) {
 				// 查詢特定租賃記錄：renter 和 shared_owner 都可以訪問
 				rentWithAuth.GET("/:id", RoleMiddleware("renter", "shared_owner"), handlers.GetRentByID)
 				// 查詢所有預約記錄：renter 和 shared_owner 都可以訪問
-				rentWithAuth.GET("/reservations", RoleMiddleware("renter", "shared_owner"), handlers.GetReservations)
+				rentWithAuth.GET("/reservations", RoleMiddleware("renter", "shared_owner"), handlers.GetAllReservations)
 				// 取消租用：renter 和 shared_owner 都可以操作
 				rentWithAuth.DELETE("/:id", RoleMiddleware("renter", "shared_owner"), handlers.CancelRent)
 

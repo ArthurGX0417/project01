@@ -571,3 +571,48 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 	log.Printf("Successfully fetched %d currently rented spots for member_id=%d, role=%s", len(rents), memberID, role)
 	return rents, nil
 }
+
+// GetAllReservations 查詢所有 reserved 狀態的記錄
+func GetAllReservations(memberID int, role string) ([]models.Rent, error) {
+	var reservations []models.Rent
+
+	query := database.DB.
+		Preload("Member").
+		Preload("ParkingSpot").
+		Preload("ParkingSpot.Member").
+		Where("status = ?", "reserved")
+
+	switch role {
+	case "renter":
+		query = query.Where("member_id = ?", memberID)
+	case "shared_owner":
+		query = query.Joins("JOIN parking_spot ps ON ps.spot_id = rents.spot_id").
+			Where("ps.member_id = ?", memberID)
+	case "admin":
+		// admin 可以查詢所有 reserved 記錄，無需額外條件
+	default:
+		log.Printf("Insufficient role permissions: role=%s", role)
+		return nil, fmt.Errorf("insufficient role permissions: role=%s", role)
+	}
+
+	if err := query.Find(&reservations).Error; err != nil {
+		log.Printf("Failed to query reservations: error=%v", err)
+		return nil, fmt.Errorf("failed to fetch reservations: database error: %w", err)
+	}
+
+	for i := range reservations {
+		reservations[i].StartTime = reservations[i].StartTime.In(time.FixedZone("CST", 8*60*60))
+		reservations[i].EndTime = reservations[i].EndTime.In(time.FixedZone("CST", 8*60*60))
+		if reservations[i].ActualEndTime != nil {
+			*reservations[i].ActualEndTime = reservations[i].ActualEndTime.In(time.FixedZone("CST", 8*60*60))
+		}
+
+		if reservations[i].ParkingSpot.SpotID == 0 {
+			log.Printf("Parking spot not found for reservation: rent_id=%d, spot_id=%d", reservations[i].RentID, reservations[i].SpotID)
+			continue
+		}
+	}
+
+	log.Printf("Successfully fetched %d reservations for member_id=%d, role=%s", len(reservations), memberID, role)
+	return reservations, nil
+}

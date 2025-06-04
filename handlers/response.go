@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"log"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,9 +18,10 @@ type APIResponse struct {
 
 // SuccessResponse 返回成功的回應
 func SuccessResponse(c *gin.Context, statusCode int, message string, data interface{}) {
-	// 檢查 statusCode 是否為 2xx
 	if statusCode < 200 || statusCode >= 300 {
 		log.Printf("Warning: SuccessResponse called with invalid status code %d, should be 2xx", statusCode)
+		ErrorResponse(c, http.StatusInternalServerError, "內部伺服器錯誤", "無效的成功狀態碼", "ERR_INVALID_STATUS_CODE")
+		return
 	}
 
 	c.JSON(statusCode, APIResponse{
@@ -31,9 +33,9 @@ func SuccessResponse(c *gin.Context, statusCode int, message string, data interf
 
 // ErrorResponse 返回失敗的回應
 func ErrorResponse(c *gin.Context, statusCode int, message string, err string, code ...string) {
-	// 檢查 statusCode 是否為 4xx 或 5xx
 	if statusCode < 400 || statusCode >= 600 {
 		log.Printf("Warning: ErrorResponse called with invalid status code %d, should be 4xx or 5xx", statusCode)
+		statusCode = http.StatusInternalServerError // 預設為 500
 	}
 
 	response := APIResponse{
@@ -42,7 +44,6 @@ func ErrorResponse(c *gin.Context, statusCode int, message string, err string, c
 		Error:   err,
 	}
 
-	// 如果提供了 code 參數，則設置 Code 字段
 	if len(code) > 0 {
 		response.Code = code[0]
 	}

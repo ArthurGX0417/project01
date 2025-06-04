@@ -1156,54 +1156,6 @@ func GetRentByID(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "查詢成功", rent.ToResponse(availableDays, parkingSpotRents))
 }
 
-// 查詢所有 reserved 狀態的記錄
-func GetReservations(c *gin.Context) {
-	currentMemberID, exists := c.Get("member_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status":  false,
-			"message": "未授權",
-			"error":   "member_id not found in token",
-			"code":    "ERR_NO_MEMBER_ID",
-		})
-		return
-	}
-
-	currentMemberIDInt, ok := currentMemberID.(int)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status":  false,
-			"message": "未授權",
-			"error":   "invalid member_id type",
-			"code":    "ERR_INVALID_MEMBER_ID",
-		})
-		return
-	}
-
-	var reservations []models.Rent
-	if err := database.DB.Where("member_id = ? AND status = ?", currentMemberIDInt, "reserved").Find(&reservations).Error; err != nil {
-		log.Printf("Failed to get reservations: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  false,
-			"message": "查詢預約記錄失敗",
-			"error":   err.Error(),
-			"code":    "ERR_FETCH_RESERVATIONS",
-		})
-		return
-	}
-
-	rentResponses := make([]models.SimpleRentResponse, len(reservations))
-	for i, reservation := range reservations {
-		rentResponses[i] = reservation.ToSimpleResponse()
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":  true,
-		"message": "查詢成功",
-		"data":    rentResponses,
-	})
-}
-
 // 處理預約超時 預約轉租賃
 func ConfirmReservation(c *gin.Context) {
 	idStr := c.Param("id")
@@ -1312,4 +1264,92 @@ func GetCurrentlyRentedSpots(c *gin.Context) {
 	}
 
 	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)
+}
+
+// GetAllReservations 查詢所有 reserved 狀態的記錄
+func GetAllReservations(c *gin.Context) {
+	// 從上下文獲取 member_id
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		log.Printf("Failed to get member_id from context")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "member_id not found in token",
+			"code":    "ERR_NO_MEMBER_ID",
+		})
+		return
+	}
+
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		log.Printf("Invalid member_id type in context")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "invalid member_id type",
+			"code":    "ERR_INVALID_MEMBER_ID",
+		})
+		return
+	}
+
+	// 從上下文獲取 role
+	role, exists := c.Get("role")
+	if !exists {
+		log.Printf("Failed to get role from context")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "role not found in token",
+			"code":    "ERR_NO_ROLE",
+		})
+		return
+	}
+
+	roleStr, ok := role.(string)
+	if !ok {
+		log.Printf("Invalid role type in context")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "未授權",
+			"error":   "invalid role type",
+			"code":    "ERR_INVALID_ROLE",
+		})
+		return
+	}
+
+	// 調用服務層查詢預約記錄
+	reservations, err := services.GetAllReservations(currentMemberIDInt, roleStr)
+	if err != nil {
+		if err.Error() == "insufficient role permissions: role="+roleStr {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  false,
+				"message": "權限不足",
+				"error":   "Insufficient role permissions",
+				"code":    "ERR_INSUFFICIENT_PERMISSIONS",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "查詢失敗",
+			"error":   "failed to fetch reservations: database error",
+			"code":    "ERR_DATABASE",
+		})
+		return
+	}
+
+	// 準備回應資料
+	var responseData []models.RentResponse
+	for _, reservation := range reservations {
+		// 由於不需要 availableDays 和 parkingSpotRents，傳入空值
+		responseData = append(responseData, reservation.ToResponse([]models.ParkingSpotAvailableDay{}, []models.Rent{}))
+	}
+
+	// 成功回應
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "查詢成功",
+		"data":    responseData,
+	})
 }

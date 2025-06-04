@@ -858,12 +858,41 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 假設資料庫中的時間為 CST，設置時區
+	// 假設資料庫時間是 CST，但 GORM 讀取時可能解析為 UTC
+	// 直接將時間假設為 CST 並轉換
 	cstZone := time.FixedZone("CST", 8*60*60)
-	rent.StartTime = rent.StartTime.In(cstZone)
-	rent.EndTime = rent.EndTime.In(cstZone)
+	// 假設資料庫儲存的時間是 CST（不含時區資訊），需要將其轉換為正確的 CST 時間
+	rent.StartTime = time.Date(
+		rent.StartTime.Year(),
+		rent.StartTime.Month(),
+		rent.StartTime.Day(),
+		rent.StartTime.Hour(),
+		rent.StartTime.Minute(),
+		rent.StartTime.Second(),
+		rent.StartTime.Nanosecond(),
+		cstZone,
+	)
+	rent.EndTime = time.Date(
+		rent.EndTime.Year(),
+		rent.EndTime.Month(),
+		rent.EndTime.Day(),
+		rent.EndTime.Hour(),
+		rent.EndTime.Minute(),
+		rent.EndTime.Second(),
+		rent.EndTime.Nanosecond(),
+		cstZone,
+	)
 	if rent.ActualEndTime != nil {
-		*rent.ActualEndTime = rent.ActualEndTime.In(cstZone)
+		*rent.ActualEndTime = time.Date(
+			rent.ActualEndTime.Year(),
+			rent.ActualEndTime.Month(),
+			rent.ActualEndTime.Day(),
+			rent.ActualEndTime.Hour(),
+			rent.ActualEndTime.Minute(),
+			rent.ActualEndTime.Second(),
+			rent.ActualEndTime.Nanosecond(),
+			cstZone,
+		)
 	}
 
 	if rent.ParkingSpot.SpotID == 0 {

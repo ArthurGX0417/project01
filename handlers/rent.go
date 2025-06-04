@@ -28,25 +28,20 @@ func parseTimeWithCST(timeStr string) (time.Time, error) {
 	if err == nil {
 		// 獲取時區偏移量
 		_, offset := t.Zone()
-		cstZone := time.FixedZone("CST", 8*60*60) // +08:00
-		if offset == 0 {                          // 不帶時區，假設為 CST
-			log.Printf("Parsed RFC3339 time without timezone %s, assumed as CST: %s", timeStr, t.In(cstZone).Format("2006-01-02T15:04:05"))
-			return t.In(cstZone), nil
-		}
-		// 檢查時區是否為 +08:00 或 Z
 		if offset != 8*60*60 && t.Location().String() != "Z" {
 			return time.Time{}, fmt.Errorf("time zone must be +08:00 or Z, got offset %d hours", offset/(60*60))
 		}
-		log.Printf("Parsed RFC3339 time %s, converted to CST: %s", timeStr, t.In(cstZone).Format("2006-01-02T15:04:05"))
-		return t.In(cstZone), nil
+		log.Printf("Parsed RFC3339 time %s, converted to UTC: %s", timeStr, t.UTC().Format("2006-01-02T15:04:05"))
+		return t.UTC(), nil // 轉換為 UTC
 	}
 
 	// 嘗試解析不帶時區的格式（假設為 CST）
 	t, err = time.Parse("2006-01-02T15:04:05", timeStr)
 	if err == nil {
 		cstZone := time.FixedZone("CST", 8*60*60) // +08:00
-		log.Printf("Parsed time %s as CST: %s", timeStr, t.In(cstZone).Format("2006-01-02T15:04:05"))
-		return t.In(cstZone), nil
+		t = t.In(cstZone)
+		log.Printf("Parsed time %s as CST, converted to UTC: %s", timeStr, t.UTC().Format("2006-01-02T15:04:05"))
+		return t.UTC(), nil // 轉換為 UTC
 	}
 
 	return time.Time{}, fmt.Errorf("time must be in 'YYYY-MM-DDThh:mm:ss' or RFC 3339 format")
@@ -858,41 +853,13 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 假設資料庫時間是 CST，但 GORM 讀取時可能解析為 UTC
-	// 直接將時間假設為 CST 並轉換
+	// 資料庫時間是 UTC，轉換為 CST 用於處理
 	cstZone := time.FixedZone("CST", 8*60*60)
-	// 假設資料庫儲存的時間是 CST（不含時區資訊），需要將其轉換為正確的 CST 時間
-	rent.StartTime = time.Date(
-		rent.StartTime.Year(),
-		rent.StartTime.Month(),
-		rent.StartTime.Day(),
-		rent.StartTime.Hour(),
-		rent.StartTime.Minute(),
-		rent.StartTime.Second(),
-		rent.StartTime.Nanosecond(),
-		cstZone,
-	)
-	rent.EndTime = time.Date(
-		rent.EndTime.Year(),
-		rent.EndTime.Month(),
-		rent.EndTime.Day(),
-		rent.EndTime.Hour(),
-		rent.EndTime.Minute(),
-		rent.EndTime.Second(),
-		rent.EndTime.Nanosecond(),
-		cstZone,
-	)
+	rentStartTimeCST := rent.StartTime.In(cstZone)
+	var rentActualEndTimeCST *time.Time
 	if rent.ActualEndTime != nil {
-		*rent.ActualEndTime = time.Date(
-			rent.ActualEndTime.Year(),
-			rent.ActualEndTime.Month(),
-			rent.ActualEndTime.Day(),
-			rent.ActualEndTime.Hour(),
-			rent.ActualEndTime.Minute(),
-			rent.ActualEndTime.Second(),
-			rent.ActualEndTime.Nanosecond(),
-			cstZone,
-		)
+		t := rent.ActualEndTime.In(cstZone)
+		rentActualEndTimeCST = &t
 	}
 
 	if rent.ParkingSpot.SpotID == 0 {
@@ -917,7 +884,7 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	if rent.ActualEndTime != nil {
+	if rentActualEndTimeCST != nil {
 		log.Printf("Attempted to settle already settled rent ID %d", id)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
@@ -965,13 +932,15 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	now := time.Now().In(time.FixedZone("CST", 8*60*60))
-	log.Printf("Received actual_end_time: %s, parsed as CST: %s, current CST time: %s, start_time: %s",
+	// 當前時間使用 CST
+	now := time.Now().In(cstZone)
+	log.Printf("Received actual_end_time: %s, parsed as CST: %s, current CST time: %s, start_time (CST): %s",
 		input.ActualEndTime, actualEndTime.Format("2006-01-02T15:04:05"),
-		now.Format("2006-01-02T15:04:05"), rent.StartTime.Format("2006-01-02T15:04:05"))
+		now.Format("2006-01-02T15:04:05"), rentStartTimeCST.Format("2006-01-02T15:04:05"))
 
-	if actualEndTime.Before(rent.StartTime) {
-		log.Printf("Actual end time %v is before start time %v for rent ID %d", actualEndTime, rent.StartTime, id)
+	// 比較時使用 CST 時間
+	if actualEndTime.Before(rentStartTimeCST) {
+		log.Printf("Actual end time %v is before start time %v for rent ID %d", actualEndTime, rentStartTimeCST, id)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無效的離開時間",
@@ -1018,6 +987,7 @@ func LeaveAndPay(c *gin.Context) {
 		}
 	}()
 
+	// 費用計算使用 UTC 時間，但結果應與 CST 時間一致
 	totalCost, err := services.CalculateRentCost(rent, rent.ParkingSpot, actualEndTime)
 	if err != nil {
 		tx.Rollback()
@@ -1033,6 +1003,7 @@ func LeaveAndPay(c *gin.Context) {
 
 	log.Printf("Calculated cost for rent ID %d: total_cost=%.2f", id, totalCost)
 
+	// 儲存時使用 UTC 時間
 	rent.ActualEndTime = &actualEndTime
 	rent.TotalCost = totalCost
 	rent.Status = "completed"

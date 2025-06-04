@@ -14,12 +14,7 @@ import (
 
 // CalculateRentCost 統一計算租賃費用
 func CalculateRentCost(rent models.Rent, spot models.ParkingSpot, actualEndTime time.Time) (float64, error) {
-	// 確保所有時間為 CST
-	cstZone := time.FixedZone("CST", 8*60*60)
-	rent.StartTime = rent.StartTime.In(cstZone)
-	rent.EndTime = rent.EndTime.In(cstZone)
-	actualEndTime = actualEndTime.In(cstZone)
-
+	// 不再需要強制轉為 CST，因為資料庫時間已經是 CST
 	if actualEndTime.Before(rent.StartTime) {
 		log.Printf("actual_end_time %v is before start_time %v for rent_id %d", actualEndTime, rent.StartTime, rent.RentID)
 		return 0, fmt.Errorf("actual end time %v cannot be earlier than start time %v", actualEndTime, rent.StartTime)
@@ -67,10 +62,10 @@ func CalculateRentCost(rent models.Rent, spot models.ParkingSpot, actualEndTime 
 
 // RentParkingSpot 租用車位
 func RentParkingSpot(rent *models.Rent) error {
-	// 確保時間為 CST
-	cstZone := time.FixedZone("CST", 8*60*60)
-	rent.StartTime = rent.StartTime.In(cstZone)
-	rent.EndTime = rent.EndTime.In(cstZone)
+	// 不再需要強制轉為 CST，因為資料庫時間已經是 CST
+	if rent.StartTime.After(rent.EndTime) {
+		return fmt.Errorf("start_time cannot be later than end_time")
+	}
 
 	// 驗證 member_id
 	var member models.Member
@@ -80,11 +75,6 @@ func RentParkingSpot(rent *models.Rent) error {
 		}
 		log.Printf("Failed to verify member: member_id=%d, error=%v", rent.MemberID, err)
 		return fmt.Errorf("failed to verify member: %w", err)
-	}
-
-	// 移除 FetchAvailableDays 檢查，假設車位可用性由其他邏輯保證
-	if rent.StartTime.After(rent.EndTime) {
-		return fmt.Errorf("start_time cannot be later than end_time")
 	}
 
 	// 設置 actual_end_time 為 NULL
@@ -193,10 +183,6 @@ func LeaveAndPay(rentID int, actualEndTime time.Time) (float64, error) {
 	var rent models.Rent
 	var spot models.ParkingSpot
 
-	// 確保 actualEndTime 是 CST 時區
-	cstZone := time.FixedZone("CST", 8*60*60)
-	actualEndTime = actualEndTime.In(cstZone)
-
 	// 開始事務
 	tx := database.DB.Begin()
 	defer func() {
@@ -244,6 +230,7 @@ func LeaveAndPay(rentID int, actualEndTime time.Time) (float64, error) {
 	}
 
 	// 更新車位狀態
+	cstZone := time.FixedZone("CST", 8*60*60) // 保留此處，因為 UpdateParkingSpotStatus 需要時區參數
 	newStatus, err := UpdateParkingSpotStatus(tx, rent.SpotID, actualEndTime, cstZone)
 	if err != nil {
 		tx.Rollback()
@@ -300,11 +287,7 @@ func GetRentByID(id int, memberID int, role string) (*models.Rent, []models.Park
 
 // ReserveParkingSpot 創建車位預約記錄
 func ReserveParkingSpot(reservation *models.Rent) error {
-	// 確保時間為 CST
-	cstZone := time.FixedZone("CST", 8*60*60)
-	reservation.StartTime = reservation.StartTime.In(cstZone)
-	reservation.EndTime = reservation.EndTime.In(cstZone)
-
+	// 不再需要強制轉為 CST，因為資料庫時間已經是 CST
 	// 驗證會員是否存在
 	var member models.Member
 	if err := database.DB.Where("member_id = ?", reservation.MemberID).First(&member).Error; err != nil {
@@ -326,7 +309,6 @@ func ReserveParkingSpot(reservation *models.Rent) error {
 		return fmt.Errorf("failed to query parking spot: %w", err)
 	}
 
-	// 移除 FetchAvailableDays 檢查，假設車位可用性由其他邏輯保證
 	if reservation.StartTime.After(reservation.EndTime) {
 		return fmt.Errorf("start_time cannot be later than end_time")
 	}

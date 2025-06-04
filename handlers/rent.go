@@ -857,14 +857,6 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	cstZone := time.FixedZone("CST", 8*60*60)
-	rentStartTimeCST := rent.StartTime.In(cstZone)
-	var rentActualEndTimeCST *time.Time
-	if rent.ActualEndTime != nil {
-		t := rent.ActualEndTime.In(cstZone)
-		rentActualEndTimeCST = &t
-	}
-
 	if rent.ParkingSpot.SpotID == 0 {
 		log.Printf("ParkingSpot not found for rent ID %d, SpotID=%d", id, rent.SpotID)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -887,7 +879,7 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	if rentActualEndTimeCST != nil {
+	if rent.ActualEndTime != nil {
 		log.Printf("Attempted to settle already settled rent ID %d", id)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
@@ -909,15 +901,16 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 自動設置 actual_end_time 為當前 CST 時間
+	// 自動設置 actual_end_time 為當前時間
+	cstZone := time.FixedZone("CST", 8*60*60)
 	now := time.Now().In(cstZone)
 	actualEndTime := now
 	log.Printf("Set actual_end_time to current CST time: %s, start_time (CST): %s",
-		actualEndTime.Format("2006-01-02T15:04:05"), rentStartTimeCST.Format("2006-01-02T15:04:05"))
+		actualEndTime.Format("2006-01-02T15:04:05"), rent.StartTime.Format("2006-01-02T15:04:05"))
 
-	// 使用 CST 時間進行比較
-	if actualEndTime.Before(rentStartTimeCST) {
-		log.Printf("Actual end time %v is before start time %v for rent ID %d", actualEndTime, rentStartTimeCST, id)
+	// 直接比較時間，不需要額外轉換
+	if actualEndTime.Before(rent.StartTime) {
+		log.Printf("Actual end time %v is before start time %v for rent ID %d", actualEndTime, rent.StartTime, id)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無效的離開時間",
@@ -941,7 +934,6 @@ func LeaveAndPay(c *gin.Context) {
 		}
 	}()
 
-	// 費用計算使用 CST 時間
 	totalCost, err := services.CalculateRentCost(rent, rent.ParkingSpot, actualEndTime)
 	if err != nil {
 		tx.Rollback()
@@ -957,7 +949,6 @@ func LeaveAndPay(c *gin.Context) {
 
 	log.Printf("Calculated cost for rent ID %d: total_cost=%.2f", id, totalCost)
 
-	// 儲存時使用 CST 時間
 	rent.ActualEndTime = &actualEndTime
 	rent.TotalCost = totalCost
 	rent.Status = "completed"

@@ -1,7 +1,7 @@
 package database
 
 import (
-	"fmt" // Add this import for fmt.Sprintf
+	"fmt"
 	"log"
 	"os"
 	"project01/models"
@@ -34,8 +34,8 @@ func InitDB() {
 		log.Fatalf("Missing required database environment variables. Ensure DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, and DB_NAME are set in the .env file.")
 	}
 
-	// 動態構建 DSN，設置 loc=UTC
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=UTC", user, password, host, port, name)
+	// 動態構建 DSN，設置 loc=Asia/Shanghai
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Asia%%2FShanghai", user, password, host, port, name)
 	var err error
 
 	// 重試機制
@@ -83,13 +83,15 @@ func InitDB() {
 	}
 	log.Printf("Connected to database: %s", dbName)
 
-	// 添加自動遷移
-	err = DB.AutoMigrate(
+	// 添加自動遷移並檢查錯誤
+	if err := DB.AutoMigrate(
 		&models.Member{},
 		&models.ParkingSpot{},
 		&models.ParkingSpotAvailableDay{},
 		&models.Rent{},
-	)
+	); err != nil {
+		log.Fatalf("Failed to auto-migrate database: %v", err)
+	}
 
 	log.Println("Database initialized successfully with GORM")
 }

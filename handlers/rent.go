@@ -953,8 +953,8 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 放寬檢查，允許 actual_end_time 比 now 早 5 秒或等於 now
-	const timeTolerance = 5 * time.Second
+	// 放寬檢查，允許 actual_end_time 比 now 晚最多 1 分鐘
+	const timeTolerance = 1 * time.Minute
 	if actualEndTime.After(nowUTC.Add(timeTolerance)) {
 		log.Printf("Actual end time %v is after current UTC time %v (tolerance: %v) for rent ID %d", actualEndTime, nowUTC, timeTolerance, id)
 		c.JSON(http.StatusBadRequest, gin.H{

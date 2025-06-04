@@ -26,13 +26,15 @@ func parseTimeWithCST(timeStr string) (time.Time, error) {
 	// 嘗試解析 RFC 3339 格式（包含時區資訊）
 	t, err := time.Parse(time.RFC3339, timeStr)
 	if err == nil {
-		// 獲取時區偏移量
+		// 獲取時區偏移量和位置名稱
+		locName := t.Location().String()
 		_, offset := t.Zone()
-		if offset != 8*60*60 && t.Location().String() != "Z" {
-			return time.Time{}, fmt.Errorf("time zone must be +08:00 or Z, got offset %d hours", offset/(60*60))
+		// 允許時區為 +08:00 或 UTC（Z）
+		if offset != 8*60*60 && locName != "UTC" {
+			return time.Time{}, fmt.Errorf("time zone must be +08:00 or UTC, got offset %d hours (%s)", offset/(60*60), locName)
 		}
 		log.Printf("Parsed RFC3339 time %s, converted to UTC: %s", timeStr, t.UTC().Format("2006-01-02T15:04:05"))
-		return t.UTC(), nil // 轉換為 UTC
+		return t.UTC(), nil // 轉換為 UTC 儲存
 	}
 
 	// 嘗試解析不帶時區的格式（假設為 CST）
@@ -41,7 +43,7 @@ func parseTimeWithCST(timeStr string) (time.Time, error) {
 		cstZone := time.FixedZone("CST", 8*60*60) // +08:00
 		t = t.In(cstZone)
 		log.Printf("Parsed time %s as CST, converted to UTC: %s", timeStr, t.UTC().Format("2006-01-02T15:04:05"))
-		return t.UTC(), nil // 轉換為 UTC
+		return t.UTC(), nil // 轉換為 UTC 儲存
 	}
 
 	return time.Time{}, fmt.Errorf("time must be in 'YYYY-MM-DDThh:mm:ss' or RFC 3339 format")

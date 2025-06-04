@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"project01/models"
 	"time"
 
 	"gorm.io/driver/mysql"
@@ -83,30 +82,6 @@ func InitDB() {
 		log.Fatalf("Failed to get current database: %v", err)
 	}
 	log.Printf("Connected to database: %s", dbName)
-
-	// 自定義遷移邏輯，避免修改現有欄位
-	migrator := DB.Migrator()
-	modelsToMigrate := []interface{}{
-		&models.Member{},
-		&models.ParkingSpot{},
-		&models.ParkingSpotAvailableDay{},
-		&models.Rent{},
-	}
-
-	for _, model := range modelsToMigrate {
-		// 檢查表是否存在
-		if !migrator.HasTable(model) {
-			// 表不存在，創建新表
-			if err := migrator.CreateTable(model); err != nil {
-				log.Fatalf("Failed to create table for model %T: %v", model, err)
-			}
-		} else {
-			// 表存在，只添加缺少的欄位，不修改現有欄位
-			if err := migrator.AutoMigrate(model); err != nil {
-				log.Fatalf("Failed to auto-migrate model %T: %v", model, err)
-			}
-		}
-	}
 
 	log.Println("Database initialized successfully with GORM")
 }

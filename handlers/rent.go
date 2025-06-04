@@ -936,6 +936,7 @@ func LeaveAndPay(c *gin.Context) {
 
 	// 當前時間使用 CST
 	now := time.Now().In(cstZone)
+	actualEndTime = actualEndTime.In(cstZone) // 轉為 CST
 	log.Printf("Received actual_end_time: %s, parsed as CST: %s, current CST time: %s, start_time (CST): %s",
 		input.ActualEndTime, actualEndTime.Format("2006-01-02T15:04:05"),
 		now.Format("2006-01-02T15:04:05"), rentStartTimeCST.Format("2006-01-02T15:04:05"))

@@ -29,21 +29,23 @@ func parseTimeWithCST(timeStr string) (time.Time, error) {
 		// 獲取時區偏移量和位置名稱
 		locName := t.Location().String()
 		_, offset := t.Zone()
-		// 允許時區為 +08:00 或 UTC（Z）
+		// 允許時區為 +08:00 或無時區（假設為 CST）
 		if offset != 8*60*60 && locName != "UTC" {
 			return time.Time{}, fmt.Errorf("time zone must be +08:00 or UTC, got offset %d hours (%s)", offset/(60*60), locName)
 		}
-		log.Printf("Parsed RFC3339 time %s, converted to UTC: %s", timeStr, t.UTC().Format("2006-01-02T15:04:05"))
-		return t.UTC(), nil // 轉換為 UTC 儲存
+		cstZone := time.FixedZone("CST", 8*60*60)
+		t = t.In(cstZone) // 統一轉為 CST
+		log.Printf("Parsed RFC3339 time %s as CST: %s", timeStr, t.Format("2006-01-02T15:04:05"))
+		return t, nil
 	}
 
 	// 嘗試解析不帶時區的格式（假設為 CST）
 	t, err = time.Parse("2006-01-02T15:04:05", timeStr)
 	if err == nil {
-		cstZone := time.FixedZone("CST", 8*60*60) // +08:00
+		cstZone := time.FixedZone("CST", 8*60*60)
 		t = t.In(cstZone)
-		log.Printf("Parsed time %s as CST, converted to UTC: %s", timeStr, t.UTC().Format("2006-01-02T15:04:05"))
-		return t.UTC(), nil // 轉換為 UTC 儲存
+		log.Printf("Parsed time %s as CST: %s", timeStr, t.Format("2006-01-02T15:04:05"))
+		return t, nil
 	}
 
 	return time.Time{}, fmt.Errorf("time must be in 'YYYY-MM-DDThh:mm:ss' or RFC 3339 format")
@@ -855,7 +857,6 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	// 資料庫時間是 UTC，轉換為 CST 用於日誌顯示
 	cstZone := time.FixedZone("CST", 8*60*60)
 	rentStartTimeCST := rent.StartTime.In(cstZone)
 	var rentActualEndTimeCST *time.Time
@@ -908,59 +909,19 @@ func LeaveAndPay(c *gin.Context) {
 		return
 	}
 
-	var input struct {
-		ActualEndTime string `json:"actual_end_time" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&input); err != nil {
-		log.Printf("Invalid input: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  false,
-			"message": "無效的輸入資料",
-			"error":   err.Error(),
-			"code":    "ERR_INVALID_INPUT",
-		})
-		return
-	}
-
-	actualEndTime, err := parseTimeWithCST(input.ActualEndTime)
-	if err != nil {
-		log.Printf("Invalid actual_end_time format: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  false,
-			"message": "無效的離開時間",
-			"error":   err.Error(),
-			"code":    "ERR_INVALID_TIME_FORMAT",
-		})
-		return
-	}
-
-	// 當前時間使用 CST
+	// 自動設置 actual_end_time 為當前 CST 時間
 	now := time.Now().In(cstZone)
-	nowUTC := now.UTC() // 將當前時間轉為 UTC 進行比較
-	log.Printf("Received actual_end_time: %s, parsed as UTC: %s, current CST time: %s, start_time (CST): %s",
-		input.ActualEndTime, actualEndTime.Format("2006-01-02T15:04:05"),
-		now.Format("2006-01-02T15:04:05"), rentStartTimeCST.Format("2006-01-02T15:04:05"))
+	actualEndTime := now
+	log.Printf("Set actual_end_time to current CST time: %s, start_time (CST): %s",
+		actualEndTime.Format("2006-01-02T15:04:05"), rentStartTimeCST.Format("2006-01-02T15:04:05"))
 
-	// 比較時使用 UTC 時間
-	if actualEndTime.Before(rent.StartTime) {
-		log.Printf("Actual end time %v is before start time %v for rent ID %d", actualEndTime, rent.StartTime, id)
+	// 使用 CST 時間進行比較
+	if actualEndTime.Before(rentStartTimeCST) {
+		log.Printf("Actual end time %v is before start time %v for rent ID %d", actualEndTime, rentStartTimeCST, id)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無效的離開時間",
 			"error":   "actual_end_time cannot be earlier than start_time",
-			"code":    "ERR_INVALID_TIME",
-		})
-		return
-	}
-
-	// 放寬檢查，允許 actual_end_time 比 now 晚最多 1 分鐘
-	const timeTolerance = 1 * time.Minute
-	if actualEndTime.After(nowUTC.Add(timeTolerance)) {
-		log.Printf("Actual end time %v is after current UTC time %v (tolerance: %v) for rent ID %d", actualEndTime, nowUTC, timeTolerance, id)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  false,
-			"message": "無效的離開時間",
-			"error":   "actual_end_time cannot be later than current time",
 			"code":    "ERR_INVALID_TIME",
 		})
 		return
@@ -980,7 +941,7 @@ func LeaveAndPay(c *gin.Context) {
 		}
 	}()
 
-	// 費用計算使用 UTC 時間
+	// 費用計算使用 CST 時間
 	totalCost, err := services.CalculateRentCost(rent, rent.ParkingSpot, actualEndTime)
 	if err != nil {
 		tx.Rollback()
@@ -996,7 +957,7 @@ func LeaveAndPay(c *gin.Context) {
 
 	log.Printf("Calculated cost for rent ID %d: total_cost=%.2f", id, totalCost)
 
-	// 儲存時使用 UTC 時間
+	// 儲存時使用 CST 時間
 	rent.ActualEndTime = &actualEndTime
 	rent.TotalCost = totalCost
 	rent.Status = "completed"

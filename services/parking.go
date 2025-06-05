@@ -139,6 +139,12 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	// 同步車位狀態
+	if err := SyncParkingSpotStatus(); err != nil {
+		log.Printf("Failed to sync parking spot status after creation: %v", err)
+		return fmt.Errorf("failed to sync parking spot status: %w", err)
+	}
+
 	log.Printf("Successfully shared parking spot with ID %d with status %s", spot.SpotID, spot.Status)
 	return nil
 }
@@ -659,7 +665,6 @@ func SyncParkingSpotStatus() error {
 			continue
 		}
 
-		// 檢查當前狀態是否需要更新
 		if len(activeRents) > 0 {
 			if spot.Status != "occupied" {
 				if err := database.DB.Model(&spot).Update("status", "occupied").Error; err != nil {
@@ -667,13 +672,11 @@ func SyncParkingSpotStatus() error {
 					continue
 				}
 				log.Printf("Updated status for spot %d to occupied due to active rents", spot.SpotID)
-			} else {
-				log.Printf("No status change needed for spot %d, current status: occupied", spot.SpotID)
 			}
 			continue
 		}
 
-		// 檢查 availableDays 是否有當天不可用
+		// 僅在無活躍租賃時檢查 availableDays
 		var todayAvailable bool
 		todayStr := now.Format("2006-01-02")
 		var count int64
@@ -684,7 +687,6 @@ func SyncParkingSpotStatus() error {
 			continue
 		}
 		todayAvailable = count > 0
-		log.Printf("Spot %d on %s: todayAvailable = %v (count = %d)", spot.SpotID, todayStr, todayAvailable, count)
 
 		if todayAvailable {
 			if spot.Status != "available" {
@@ -693,38 +695,14 @@ func SyncParkingSpotStatus() error {
 					continue
 				}
 				log.Printf("Updated status for spot %d to available due to today availability", spot.SpotID)
-			} else {
-				log.Printf("No status change needed for spot %d, current status: available", spot.SpotID)
 			}
 		} else {
-			// 如果當天沒有記錄，檢查是否有未來的可用記錄
-			var futureCount int64
-			if err := database.DB.Model(&models.ParkingSpotAvailableDay{}).
-				Where("parking_spot_id = ? AND available_date > ? AND is_available = ?", spot.SpotID, todayStr, true).
-				Count(&futureCount).Error; err != nil {
-				log.Printf("Failed to check future available days for spot %d: %v", spot.SpotID, err)
-				continue
-			}
-			if futureCount > 0 {
-				if spot.Status != "available" {
-					if err := database.DB.Model(&spot).Update("status", "available").Error; err != nil {
-						log.Printf("Failed to update status for spot %d: %v", spot.SpotID, err)
-						continue
-					}
-					log.Printf("Updated status for spot %d to available due to future availability", spot.SpotID)
-				} else {
-					log.Printf("No status change needed for spot %d, current status: available", spot.SpotID)
+			if spot.Status != "occupied" {
+				if err := database.DB.Model(&spot).Update("status", "occupied").Error; err != nil {
+					log.Printf("Failed to update status for spot %d: %v", spot.SpotID, err)
+					continue
 				}
-			} else {
-				if spot.Status != "occupied" {
-					if err := database.DB.Model(&spot).Update("status", "occupied").Error; err != nil {
-						log.Printf("Failed to update status for spot %d: %v", spot.SpotID, err)
-						continue
-					}
-					log.Printf("Updated status for spot %d to occupied due to no available days", spot.SpotID)
-				} else {
-					log.Printf("No status change needed for spot %d, current status: occupied", spot.SpotID)
-				}
+				log.Printf("Updated status for spot %d to occupied due to no availability today", spot.SpotID)
 			}
 		}
 	}

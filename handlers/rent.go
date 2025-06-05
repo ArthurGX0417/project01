@@ -1075,7 +1075,7 @@ func GetRentByID(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "查詢成功", rent.ToResponse(availableDays, parkingSpotRents))
 }
 
-// 處理預約超時 預約轉租賃
+// ConfirmReservation 處理預約確認
 func ConfirmReservation(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -1114,13 +1114,16 @@ func ConfirmReservation(c *gin.Context) {
 	}
 
 	now := time.Now().In(time.FixedZone("CST", 8*60*60))
-	if now.Before(rent.StartTime) {
-		log.Printf("Cannot confirm reservation ID %d before start time", id)
+	confirmationWindow := 15 * time.Minute // 設置提前確認的時間窗口為 15 分鐘
+	earliestConfirmationTime := rent.StartTime.Add(-confirmationWindow)
+
+	if now.Before(earliestConfirmationTime) {
+		log.Printf("Cannot confirm reservation ID %d: too early, earliest confirmation time is %s", id, earliestConfirmationTime.Format("2006-01-02T15:04:05"))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  false,
 			"message": "無法確認",
-			"error":   "預約尚未開始",
-			"code":    "ERR_NOT_STARTED",
+			"error":   fmt.Sprintf("預約只能在開始時間前 %s 開始確認", confirmationWindow),
+			"code":    "ERR_TOO_EARLY",
 		})
 		return
 	}

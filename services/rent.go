@@ -332,15 +332,16 @@ func CheckExpiredReservations() error {
 	var reservations []models.Rent
 	cstZone := time.FixedZone("CST", 8*60*60)
 	now := time.Now().In(cstZone)
+	gracePeriod := 15 * time.Minute // 設置寬限時間為 15 分鐘
 
-	// 查詢所有 status 為 reserved 且 start_time 已過期的記錄
-	if err := database.DB.Where("status = ? AND start_time < ?", "reserved", now).Find(&reservations).Error; err != nil {
+	// 查詢所有 status 為 reserved 且 start_time 已過期超過寬限時間的記錄
+	if err := database.DB.Where("status = ? AND start_time < ?", "reserved", now.Add(-gracePeriod)).Find(&reservations).Error; err != nil {
 		log.Printf("Failed to query expired reservations: error=%v", err)
 		return fmt.Errorf("failed to query expired reservations: %w", err)
 	}
 
 	if len(reservations) == 0 {
-		log.Printf("No expired reservations found at %v", now)
+		log.Printf("No expired reservations found at %v (with grace period of %s)", now, gracePeriod)
 		return nil
 	}
 
@@ -390,7 +391,7 @@ func CheckExpiredReservations() error {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("Successfully canceled %d expired reservations at %v", len(reservations), now)
+	log.Printf("Successfully canceled %d expired reservations at %v (with grace period of %s)", len(reservations), now, gracePeriod)
 	return nil
 }
 

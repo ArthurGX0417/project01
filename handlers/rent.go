@@ -38,11 +38,10 @@ func parseTimeWithCST(timeStr string) (time.Time, error) {
 		return t, nil
 	}
 
-	// 嘗試解析不帶時區的格式（假設為 CST）
-	t, err = time.Parse("2006-01-02T15:04:05", timeStr)
+	// 嘗試解析不帶時區的格式（直接視為 CST）
+	cstZone := time.FixedZone("CST", 8*60*60)
+	t, err = time.ParseInLocation("2006-01-02T15:04:05", timeStr, cstZone)
 	if err == nil {
-		cstZone := time.FixedZone("CST", 8*60*60)
-		t = t.In(cstZone)
 		log.Printf("Parsed time %s as CST: %s (assumed CST)", timeStr, t.Format("2006-01-02T15:04:05+08:00"))
 		return t, nil
 	}

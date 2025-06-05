@@ -433,10 +433,10 @@ func UpdateParkingSpotStatus(tx *gorm.DB, spotID int, now time.Time, cstZone *ti
 }
 
 // GetCurrentlyRentedSpots 查詢目前正在租用中的車位
-// GetCurrentlyRentedSpots 查詢目前正在租用中的車位
 func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 	var rents []models.Rent
-	now := time.Now().UTC() // 與資料庫時間保持一致，使用 UTC
+	cstZone := time.FixedZone("CST", 8*60*60)
+	now := time.Now().In(cstZone) // 使用 CST 時間
 
 	query := database.DB.
 		Preload("Member").
@@ -502,7 +502,8 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 // GetAllReservations 查詢所有 reserved 狀態的記錄
 func GetAllReservations(memberID int, role string) ([]models.Rent, error) {
 	var reservations []models.Rent
-	now := time.Now().UTC() // 與資料庫時間保持一致，使用 UTC
+	cstZone := time.FixedZone("CST", 8*60*60)
+	now := time.Now().In(cstZone) // 使用 CST 時間
 
 	query := database.DB.
 		Preload("Member").

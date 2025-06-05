@@ -21,21 +21,20 @@ type RentInput struct {
 	EndTime   string `json:"end_time" binding:"required"`
 }
 
-// parseTimeWithCST 解析時間字符串並轉換為 CST
-// parseTimeWithCST 解析時間字符串，確保儲存為 UTC
+// parseTimeWithCST 解析時間字符串，確保儲存為 CST（+08:00）
 func parseTimeWithCST(timeStr string) (time.Time, error) {
+	log.Printf("Received time string: %s", timeStr)
+
 	// 嘗試解析 RFC 3339 格式（包含時區資訊）
 	t, err := time.Parse(time.RFC3339, timeStr)
 	if err == nil {
-		// 獲取時區偏移量和位置名稱
 		locName := t.Location().String()
 		_, offset := t.Zone()
 		log.Printf("Parsed RFC3339 time %s with timezone %s (offset %d hours)", timeStr, locName, offset/(60*60))
-		// 如果時區不是 UTC，轉為 UTC 儲存
-		if offset != 0 {
-			t = t.UTC()
-			log.Printf("Converted to UTC: %s", t.Format("2006-01-02T15:04:05Z"))
-		}
+		// 轉為 CST 儲存
+		cstZone := time.FixedZone("CST", 8*60*60)
+		t = t.In(cstZone)
+		log.Printf("Converted to CST for storage: %s", t.Format("2006-01-02T15:04:05+08:00"))
 		return t, nil
 	}
 
@@ -44,10 +43,7 @@ func parseTimeWithCST(timeStr string) (time.Time, error) {
 	if err == nil {
 		cstZone := time.FixedZone("CST", 8*60*60)
 		t = t.In(cstZone)
-		log.Printf("Parsed time %s as CST: %s", timeStr, t.Format("2006-01-02T15:04:05"))
-		// 轉為 UTC 儲存
-		t = t.UTC()
-		log.Printf("Converted to UTC: %s", t.Format("2006-01-02T15:04:05Z"))
+		log.Printf("Parsed time %s as CST: %s (assumed CST)", timeStr, t.Format("2006-01-02T15:04:05+08:00"))
 		return t, nil
 	}
 

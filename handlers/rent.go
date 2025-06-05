@@ -238,8 +238,8 @@ func RentParkingSpot(c *gin.Context) {
 	rent := &models.Rent{
 		MemberID:  currentMemberIDInt,
 		SpotID:    input.SpotID,
-		StartTime: startTime,
-		EndTime:   endTime,
+		StartTime: startTime.In(time.FixedZone("CST", 8*60*60)), // 確保是 CST
+		EndTime:   endTime.In(time.FixedZone("CST", 8*60*60)),   // 確保是 CST
 		Status:    "pending",
 	}
 
@@ -436,8 +436,8 @@ func ReserveParkingSpot(c *gin.Context) {
 	reservation := &models.Rent{
 		MemberID:  currentMemberIDInt,
 		SpotID:    input.SpotID,
-		StartTime: startTime,
-		EndTime:   endTime,
+		StartTime: startTime.In(time.FixedZone("CST", 8*60*60)), // 確保是 CST
+		EndTime:   endTime.In(time.FixedZone("CST", 8*60*60)),   // 確保是 CST
 		Status:    "reserved",
 	}
 

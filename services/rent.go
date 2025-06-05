@@ -456,7 +456,7 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 
 	if err := query.Find(&rents).Error; err != nil {
 		log.Printf("Failed to query currently rented spots: error=%v", err)
-		return nil, fmt.Errorf("failed to query currently rented spots: %w", err)
+		return nil, fmt.Errorf("failed to retrieve currently rented spots: %w", err)
 	}
 
 	// 計算費用並同步車位狀態
@@ -464,6 +464,12 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 		var spot models.ParkingSpot
 		if err := database.DB.First(&spot, rents[i].SpotID).Error; err != nil {
 			log.Printf("Failed to query parking spot: spot_id=%d, error=%v", rents[i].SpotID, err)
+			continue
+		}
+
+		// 僅對已開始的租賃（start_time <= now）計算費用
+		if rents[i].StartTime.After(now) {
+			log.Printf("Skipping cost calculation for rent_id %d: start_time %s is in the future", rents[i].RentID, rents[i].StartTime.Format("2006-01-02T15:04:05"))
 			continue
 		}
 
@@ -479,12 +485,12 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 		if rents[i].Status == "pending" && spot.Status != "pending" {
 			spot.Status = "pending"
 			if err := database.DB.Save(&spot).Error; err != nil {
-				log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", spot.SpotID, err)
+				log.Printf("Failed to update parking spot: spot_id %d, error=%v", spot.SpotID, err)
 			}
 		} else if rents[i].Status == "reserved" && spot.Status != "reserved" {
 			spot.Status = "reserved"
 			if err := database.DB.Save(&spot).Error; err != nil {
-				log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", spot.SpotID, err)
+				log.Printf("Failed to update parking spot: spot_id %d, error=%v", spot.SpotID, err)
 			}
 		}
 	}

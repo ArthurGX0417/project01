@@ -117,9 +117,10 @@ func ShareParkingSpot(c *gin.Context) {
 
 	// 查詢相關租賃記錄
 	var rents []models.Rent
-	if err := database.DB.Where("spot_id = ?", refreshedSpot.SpotID).Find(&rents).Error; err != nil {
-		log.Printf("Failed to fetch rents for spot %d: %v", refreshedSpot.SpotID, err)
-		rents = []models.Rent{}
+	if err := database.DB.Where("spot_id = ?", spot.SpotID).Find(&rents).Error; err != nil {
+		log.Printf("Failed to fetch rents for spot %d: %v", spot.SpotID, err)
+	} else {
+		log.Printf("Rents for spot %d after creation: %v", spot.SpotID, rents)
 	}
 
 	// 回應成功

@@ -70,7 +70,6 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 
 	// 根據 availableDays 動態設定 status
 	if len(availableDays) > 0 {
-		// 檢查是否有至少一個 is_available = false
 		hasUnavailable := false
 		for _, day := range availableDays {
 			if !day.IsAvailable {
@@ -84,9 +83,9 @@ func ShareParkingSpot(spot *models.ParkingSpot, availableDays []models.ParkingSp
 			spot.Status = "available"
 		}
 	} else {
-		// 如果 availableDays 為空，自動生成未來 30 天的預設可用日期
-		now := time.Now().UTC()
-		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		// 自動生成 30 天可用日期，預設為 available
+		now := time.Now().In(time.FixedZone("CST", 8*60*60)) // 使用 CST
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.FixedZone("CST", 8*60*60))
 		availableDays = make([]models.ParkingSpotAvailableDay, 0, 30)
 		for i := 0; i < 30; i++ {
 			date := today.AddDate(0, 0, i)
@@ -652,7 +651,7 @@ func SyncParkingSpotStatus() error {
 		return fmt.Errorf("failed to fetch parking spots: %w", err)
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().In(time.FixedZone("CST", 8*60*60)) // 使用 CST
 	for _, spot := range spots {
 		var activeRents []models.Rent
 		if err := database.DB.Where("spot_id = ? AND ((actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)) AND status NOT IN ('canceled', 'completed')", spot.SpotID, now, now, now).Find(&activeRents).Error; err != nil {
@@ -660,9 +659,26 @@ func SyncParkingSpotStatus() error {
 			continue
 		}
 
-		newStatus := "available"
+		newStatus := spot.Status // 預設保留當前狀態
 		if len(activeRents) > 0 {
 			newStatus = "occupied"
+		} else {
+			// 檢查 availableDays 是否有當天不可用
+			var todayAvailable bool
+			todayStr := now.Format("2006-01-02")
+			var count int64
+			if err := database.DB.Model(&models.ParkingSpotAvailableDay{}).
+				Where("parking_spot_id = ? AND available_date = ? AND is_available = ?", spot.SpotID, todayStr, true).
+				Count(&count).Error; err != nil {
+				log.Printf("Failed to check available days for spot %d: %v", spot.SpotID, err)
+				continue
+			}
+			todayAvailable = count > 0
+			if todayAvailable {
+				newStatus = "available"
+			} else {
+				newStatus = "occupied"
+			}
 		}
 
 		if spot.Status != newStatus {

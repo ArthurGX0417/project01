@@ -433,10 +433,10 @@ func UpdateParkingSpotStatus(tx *gorm.DB, spotID int, now time.Time, cstZone *ti
 }
 
 // GetCurrentlyRentedSpots 查詢目前正在租用中的車位
+// GetCurrentlyRentedSpots 查詢目前正在租用中的車位
 func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 	var rents []models.Rent
-	cstZone := time.FixedZone("CST", 8*60*60)
-	now := time.Now().In(cstZone)
+	now := time.Now().UTC() // 與資料庫時間保持一致，使用 UTC
 
 	query := database.DB.
 		Preload("Member").
@@ -469,7 +469,7 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 
 		// 僅對已開始的租賃（start_time <= now）計算費用
 		if rents[i].StartTime.After(now) {
-			log.Printf("Skipping cost calculation for rent_id %d: start_time %s is in the future", rents[i].RentID, rents[i].StartTime.Format("2006-01-02T15:04:05"))
+			log.Printf("Skipping cost calculation for rent_id %d: start_time %s (UTC) is in the future, now: %s (UTC)", rents[i].RentID, rents[i].StartTime.Format("2006-01-02T15:04:05Z"), now.Format("2006-01-02T15:04:05Z"))
 			continue
 		}
 
@@ -495,15 +495,14 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 		}
 	}
 
-	log.Printf("Successfully fetched %d currently rented spots for member_id=%d, role=%s", len(rents), memberID, role)
+	log.Printf("Successfully fetched %d currently rented spots for member_id=%d, role=%s at %s (UTC)", len(rents), memberID, role, now.Format("2006-01-02T15:04:05Z"))
 	return rents, nil
 }
 
 // GetAllReservations 查詢所有 reserved 狀態的記錄
 func GetAllReservations(memberID int, role string) ([]models.Rent, error) {
 	var reservations []models.Rent
-	cstZone := time.FixedZone("CST", 8*60*60)
-	now := time.Now().In(cstZone)
+	now := time.Now().UTC() // 與資料庫時間保持一致，使用 UTC
 
 	query := database.DB.
 		Preload("Member").
@@ -530,19 +529,6 @@ func GetAllReservations(memberID int, role string) ([]models.Rent, error) {
 		return nil, fmt.Errorf("failed to fetch reservations: database error: %w", err)
 	}
 
-	for i := range reservations {
-		reservations[i].StartTime = reservations[i].StartTime.In(cstZone)
-		reservations[i].EndTime = reservations[i].EndTime.In(cstZone)
-		if reservations[i].ActualEndTime != nil {
-			*reservations[i].ActualEndTime = reservations[i].ActualEndTime.In(cstZone)
-		}
-
-		if reservations[i].ParkingSpot.SpotID == 0 {
-			log.Printf("Parking spot not found for reservation: rent_id=%d, spot_id=%d", reservations[i].RentID, reservations[i].SpotID)
-			continue
-		}
-	}
-
-	log.Printf("Successfully fetched %d reservations for member_id=%d, role=%s", len(reservations), memberID, role)
+	log.Printf("Successfully fetched %d reservations for member_id=%d, role=%s at %s (UTC)", len(reservations), memberID, role, now.Format("2006-01-02T15:04:05Z"))
 	return reservations, nil
 }

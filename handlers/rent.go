@@ -22,6 +22,7 @@ type RentInput struct {
 }
 
 // parseTimeWithCST 解析時間字符串並轉換為 CST
+// parseTimeWithCST 解析時間字符串，確保儲存為 UTC
 func parseTimeWithCST(timeStr string) (time.Time, error) {
 	// 嘗試解析 RFC 3339 格式（包含時區資訊）
 	t, err := time.Parse(time.RFC3339, timeStr)
@@ -29,13 +30,12 @@ func parseTimeWithCST(timeStr string) (time.Time, error) {
 		// 獲取時區偏移量和位置名稱
 		locName := t.Location().String()
 		_, offset := t.Zone()
-		// 允許時區為 +08:00 或無時區（假設為 CST）
-		if offset != 8*60*60 && locName != "UTC" {
-			return time.Time{}, fmt.Errorf("time zone must be +08:00 or UTC, got offset %d hours (%s)", offset/(60*60), locName)
+		log.Printf("Parsed RFC3339 time %s with timezone %s (offset %d hours)", timeStr, locName, offset/(60*60))
+		// 如果時區不是 UTC，轉為 UTC 儲存
+		if offset != 0 {
+			t = t.UTC()
+			log.Printf("Converted to UTC: %s", t.Format("2006-01-02T15:04:05Z"))
 		}
-		cstZone := time.FixedZone("CST", 8*60*60)
-		t = t.In(cstZone) // 統一轉為 CST
-		log.Printf("Parsed RFC3339 time %s as CST: %s", timeStr, t.Format("2006-01-02T15:04:05"))
 		return t, nil
 	}
 
@@ -45,6 +45,9 @@ func parseTimeWithCST(timeStr string) (time.Time, error) {
 		cstZone := time.FixedZone("CST", 8*60*60)
 		t = t.In(cstZone)
 		log.Printf("Parsed time %s as CST: %s", timeStr, t.Format("2006-01-02T15:04:05"))
+		// 轉為 UTC 儲存
+		t = t.UTC()
+		log.Printf("Converted to UTC: %s", t.Format("2006-01-02T15:04:05Z"))
 		return t, nil
 	}
 
@@ -238,8 +241,8 @@ func RentParkingSpot(c *gin.Context) {
 	rent := &models.Rent{
 		MemberID:  currentMemberIDInt,
 		SpotID:    input.SpotID,
-		StartTime: startTime.In(time.FixedZone("CST", 8*60*60)), // 確保是 CST
-		EndTime:   endTime.In(time.FixedZone("CST", 8*60*60)),   // 確保是 CST
+		StartTime: startTime, // 已轉為 UTC，無需再次轉換
+		EndTime:   endTime,   // 已轉為 UTC，無需再次轉換
 		Status:    "pending",
 	}
 
@@ -436,8 +439,8 @@ func ReserveParkingSpot(c *gin.Context) {
 	reservation := &models.Rent{
 		MemberID:  currentMemberIDInt,
 		SpotID:    input.SpotID,
-		StartTime: startTime.In(time.FixedZone("CST", 8*60*60)), // 確保是 CST
-		EndTime:   endTime.In(time.FixedZone("CST", 8*60*60)),   // 確保是 CST
+		StartTime: startTime, // 已轉為 UTC，無需再次轉換
+		EndTime:   endTime,   // 已轉為 UTC，無需再次轉換
 		Status:    "reserved",
 	}
 

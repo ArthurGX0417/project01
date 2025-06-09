@@ -51,8 +51,8 @@ func main() {
 	// 確保預設管理員存在
 	ensureAdminExists()
 
-	// 檢查並更新現有密碼
-	updatePasswords()
+	// 檢查並更新現有密碼和 payment_info
+	updatePasswordsAndPaymentInfo()
 
 	// 設置 Gin 模式為 release
 	gin.SetMode(gin.ReleaseMode)
@@ -106,12 +106,24 @@ func ensureAdminExists() {
 	}
 
 	// 哈希密碼
-	hashedPassword, err := utils.HashPassword(admin.Password)
+	hashedPassword, err := utils.HashPassword("default_password") // 假設預設密碼
 	if err != nil {
 		log.Fatalf("Failed to hash admin password: %v", err)
 	}
-	admin.Password = hashedPassword
-
+	encryptedPayment, err := utils.EncryptPaymentInfo("9999-9595-9292-9090") // 加密預設信用卡號
+	if err != nil {
+		log.Fatalf("Failed to encrypt payment info for admin: %v", err)
+	}
+	admin = models.Member{
+		MemberID:      1,
+		Name:          "adminjojo",
+		Email:         "adminjojo@gmail.com",
+		Phone:         "0936687137",
+		Password:      hashedPassword,
+		Role:          "admin",
+		PaymentMethod: "credit_card",
+		PaymentInfo:   encryptedPayment,
+	}
 	// 插入資料庫
 	if err := database.DB.Create(&admin).Error; err != nil {
 		log.Fatalf("Failed to create default admin: %v", err)
@@ -120,15 +132,15 @@ func ensureAdminExists() {
 	log.Printf("Default admin created: email=%s", admin.Email)
 }
 
-// updatePasswords 檢查並更新現有明文密碼
-func updatePasswords() {
+// updatePasswordsAndPaymentInfo 檢查並更新現有密碼和 payment_info
+func updatePasswordsAndPaymentInfo() {
 	var members []models.Member
 	if err := database.DB.Find(&members).Error; err != nil {
 		log.Fatalf("Failed to fetch members: %v", err)
 	}
 
 	for _, member := range members {
-		// 檢查密碼是否為明文（長度不為 60 或不以 $2a$ 開頭）
+		// 檢查密碼是否為明文
 		if len(member.Password) != 60 || !strings.HasPrefix(member.Password, "$2a$") {
 			log.Printf("Found plaintext password for member %s, updating...", member.Email)
 			hashedPassword, err := utils.HashPassword(member.Password)
@@ -136,14 +148,27 @@ func updatePasswords() {
 				log.Printf("Failed to hash password for member %s: %v", member.Email, err)
 				continue
 			}
-
-			// 更新密碼
 			if err := database.DB.Model(&member).Update("password", hashedPassword).Error; err != nil {
 				log.Printf("Failed to update password for member %s: %v", member.Email, err)
 				continue
 			}
 			log.Printf("Updated password for member %s", member.Email)
 		}
+
+		// 檢查 payment_info 是否為明文或未加密
+		if member.PaymentInfo != "" && !utils.IsEncrypted(member.PaymentInfo) {
+			log.Printf("Found plaintext payment_info for member %s, updating...", member.Email)
+			encryptedPayment, err := utils.EncryptPaymentInfo(member.PaymentInfo)
+			if err != nil {
+				log.Printf("Failed to encrypt payment_info for member %s: %v", member.Email, err)
+				continue
+			}
+			if err := database.DB.Model(&member).Update("payment_info", encryptedPayment).Error; err != nil {
+				log.Printf("Failed to update payment_info for member %s: %v", member.Email, err)
+				continue
+			}
+			log.Printf("Updated payment_info for member %s", member.Email)
+		}
 	}
-	log.Println("Password update check completed")
+	log.Println("Password and payment_info update check completed")
 }

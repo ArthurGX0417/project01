@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"project01/database"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"gorm.io/gorm"
 )
 
 // 電子郵件驗證 regex
@@ -289,4 +291,49 @@ func GetMemberProfile(c *gin.Context) {
 
 	SuccessResponse(c, http.StatusOK, "查詢成功", member.ToResponse())
 	log.Printf("Successfully retrieved profile for member %d", currentMemberIDInt)
+}
+
+// UpdateLicensePlate 更新車牌資訊
+func UpdateLicensePlate(c *gin.Context) {
+	type LicensePlateInput struct {
+		LicensePlate string `json:"license_plate" binding:"required,max=20"`
+	}
+
+	var input LicensePlateInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Printf("Invalid input data: %v", err)
+		ErrorResponse(c, http.StatusBadRequest, "無效的輸入資料", err.Error())
+		return
+	}
+
+	// 從 JWT 獲取當前 member_id（由 AuthMiddleware 提供）
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		log.Printf("Member ID not found in token")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token")
+		return
+	}
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		log.Printf("Invalid member_id type in context")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type")
+		return
+	}
+
+	// 呼叫服務層更新車牌
+	if err := services.UpdateLicensePlate(currentMemberIDInt, input.LicensePlate); err != nil {
+		log.Printf("Failed to update license plate: %v", err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ErrorResponse(c, http.StatusNotFound, "會員不存在", err.Error())
+		} else {
+			ErrorResponse(c, http.StatusInternalServerError, "更新車牌失敗", err.Error())
+		}
+		return
+	}
+
+	// 成功回應
+	SuccessResponse(c, http.StatusOK, "車牌更新成功", gin.H{
+		"member_id":     currentMemberIDInt,
+		"license_plate": input.LicensePlate,
+	})
 }

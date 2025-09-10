@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"project01/database"
@@ -414,4 +415,31 @@ func GetMemberRentHistory(memberID int) ([]models.Rent, error) {
 
 	log.Printf("Successfully retrieved %d rent records for member %d", len(rents), memberID)
 	return rents, nil
+}
+
+// UpdateLicensePlate 更新會員的車牌號碼
+func UpdateLicensePlate(memberID int, licensePlate string) error {
+	// 驗證車牌格式（例如：X-XXXX 或 XX-XXXX）
+	if match, _ := regexp.MatchString(`^[A-Z]{1,3}-[0-9]{4}$`, licensePlate); !match {
+		return fmt.Errorf("invalid license plate format: must be X-XXXX or XX-XXXX")
+	}
+
+	// 查詢會員
+	var member models.Member
+	if err := database.DB.First(&member, memberID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("member with ID %d not found", memberID)
+		}
+		return fmt.Errorf("failed to query member with ID %d: %w", memberID, err)
+	}
+
+	// 更新車牌
+	member.LicensePlate = licensePlate
+	if err := database.DB.Save(&member).Error; err != nil {
+		log.Printf("Failed to update license plate for member %d: %v", memberID, err)
+		return fmt.Errorf("failed to update license plate for member %d: %w", memberID, err)
+	}
+
+	log.Printf("Successfully updated license plate for member %d to %s", memberID, licensePlate)
+	return nil
 }

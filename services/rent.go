@@ -446,13 +446,17 @@ func GetCurrentlyRentedSpots(memberID int, role string) ([]models.Rent, error) {
 		Where("(status = ? AND (actual_end_time IS NULL OR actual_end_time > ?)) OR (status = ? AND (actual_end_time IS NULL OR actual_end_time > ?) AND end_time > ?)",
 			"pending", now, "reserved", now, now)
 
-	if role == "renter" {
+	switch role {
+	case "renter":
 		query = query.Where("member_id = ?", memberID)
-	} else if role == "shared_owner" {
+	case "shared_owner":
 		query = query.Joins("JOIN parking_spot ps ON ps.spot_id = rents.spot_id").
 			Where("ps.member_id = ?", memberID)
-	} else if role == "admin" {
+	case "admin":
 		// admin 可以查詢所有租賃記錄，無需額外條件
+	default:
+		log.Printf("Invalid role for GetCurrentlyRentedSpots: role=%s", role)
+		return nil, fmt.Errorf("invalid role for GetCurrentlyRentedSpots: %s", role)
 	}
 
 	if err := query.Find(&rents).Error; err != nil {
@@ -522,8 +526,8 @@ func GetAllReservations(memberID int, role string) ([]models.Rent, error) {
 	case "admin":
 		// admin 可以查詢所有 reserved 和 pending 記錄，無需額外條件
 	default:
-		log.Printf("Insufficient role permissions: role=%s", role)
-		return nil, fmt.Errorf("insufficient role permissions: role=%s", role)
+		log.Printf("Insufficient role permissions for GetAllReservations: role=%s", role)
+		return nil, fmt.Errorf("insufficient role permissions for GetAllReservations: role=%s", role)
 	}
 
 	if err := query.Find(&reservations).Error; err != nil {

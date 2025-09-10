@@ -306,6 +306,8 @@ func Path(router *gin.RouterGroup) {
 				membersWithAuth.GET("/:id/history", MemberRentHistoryMiddleware(), handlers.GetMemberRentHistory) // 查詢特定會員的租賃歷史記錄
 				membersWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateMember)                       // 更新會員資料
 				membersWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteMember)                    // 刪除會員
+				// 新增：更新車牌號碼
+				membersWithAuth.POST("/update-license", handlers.UpdateLicensePlate) // 更新車牌號碼
 			}
 		}
 
@@ -359,7 +361,6 @@ func Path(router *gin.RouterGroup) {
 				rentWithAuth.GET("/reservations", RoleMiddleware("renter", "shared_owner"), handlers.GetAllReservations)
 				// 取消租用：renter 和 shared_owner 都可以操作
 				rentWithAuth.DELETE("/:id", RoleMiddleware("renter", "shared_owner"), handlers.CancelRent)
-
 			}
 		}
 	}

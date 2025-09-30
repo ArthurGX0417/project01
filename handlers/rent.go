@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -1262,4 +1263,66 @@ func GetAllReservations(c *gin.Context) {
 		"message": "查詢成功",
 		"data":    responseData,
 	})
+}
+
+// GenerateParkingNotification 生成停車通知
+func GenerateParkingNotification(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		log.Printf("Invalid rent ID: %v", err)
+		ErrorResponse(c, http.StatusBadRequest, "無效的租賃ID", err.Error())
+		return
+	}
+
+	// 從 JWT 獲取當前 member_id
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		log.Printf("Member ID not found in token")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token")
+		return
+	}
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		log.Printf("Invalid member_id type in context")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type")
+		return
+	}
+
+	// 查詢租賃記錄
+	var rent models.Rent
+	if err := database.DB.First(&rent, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("Rent not found: rent_id=%d", id)
+			ErrorResponse(c, http.StatusNotFound, "租賃記錄不存在", fmt.Sprintf("rent_id %d not found", id))
+			return
+		}
+		log.Printf("Failed to query rent: rent_id=%d, error=%v", id, err)
+		ErrorResponse(c, http.StatusInternalServerError, "查詢租賃記錄失敗", err.Error())
+		return
+	}
+
+	// 權限檢查：僅限自己的租賃
+	if rent.MemberID != currentMemberIDInt {
+		log.Printf("Unauthorized access to rent: rent_id=%d, member_id=%d, requesting_member_id=%d", id, rent.MemberID, currentMemberIDInt)
+		ErrorResponse(c, http.StatusForbidden, "無權限", "you can only view your own rent record")
+		return
+	}
+
+	// 檢查是否已完成結算
+	if rent.ActualEndTime == nil || rent.TotalCost == 0 {
+		log.Printf("Rent not settled: rent_id=%d", id)
+		ErrorResponse(c, http.StatusBadRequest, "租賃未完成結算", "rent must be settled before notification")
+		return
+	}
+
+	// 準備通知數據
+	notificationData := gin.H{
+		"rent_id":         rent.RentID,
+		"start_time":      rent.StartTime.Format("2006-01-02T15:04:05Z"),
+		"actual_end_time": rent.ActualEndTime.Format("2006-01-02T15:04:05Z"),
+		"total_cost":      rent.TotalCost,
+	}
+
+	SuccessResponse(c, http.StatusOK, "通知數據生成成功", notificationData)
 }

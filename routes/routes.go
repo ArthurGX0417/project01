@@ -351,6 +351,8 @@ func Path(router *gin.RouterGroup) {
 				rentWithAuth.POST("/:id/confirm", RoleMiddleware("renter"), handlers.ConfirmReservation)
 				// 離開結算：renter 和 shared_owner 都可以操作
 				rentWithAuth.POST("/:id/leave", RoleMiddleware("renter", "shared_owner"), handlers.LeaveAndPay)
+				// 新增：生成通知
+				rentWithAuth.POST("/:id/notify", RoleMiddleware("renter"), handlers.GenerateParkingNotification)
 				// 新增查詢目前租用中的車位
 				rentWithAuth.GET("/currently-rented", RoleMiddleware("renter", "admin"), handlers.GetCurrentlyRentedSpots)
 				// 查詢所有租賃記錄：renter 和 shared_owner 都可以訪問

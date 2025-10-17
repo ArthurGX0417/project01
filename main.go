@@ -6,7 +6,6 @@ import (
 	"project01/database"
 	"project01/models"
 	"project01/routes"
-	"project01/services"
 	"project01/utils"
 	"strings"
 
@@ -36,17 +35,11 @@ func main() {
 	// 執行資料庫遷移
 	database.DB.AutoMigrate(
 		&models.Member{},
+		&models.ParkingLot{},
 		&models.ParkingSpot{},
 		&models.Rent{},
-		&models.ParkingSpotAvailableDay{},
 	)
 	log.Println("Database migration completed")
-
-	// 同步 parking spot 狀態
-	if err := services.SyncParkingSpotStatus(); err != nil {
-		log.Fatalf("Failed to sync parking spot statuses: %v", err)
-	}
-	log.Println("Parking spot statuses synced successfully")
 
 	// 確保預設管理員存在
 	ensureAdminExists()
@@ -75,17 +68,8 @@ func main() {
 	// 啟動定時任務
 	c := cron.New()
 
-	// 檢查預約超時定時任務（每 5 分鐘執行一次）
-	_, err := c.AddFunc("*/5 * * * *", func() {
-		log.Println("Checking for expired reservations...")
-		if err := services.CheckExpiredReservations(); err != nil {
-			log.Printf("Failed to check expired reservations: %v", err)
-		}
-	})
-	if err != nil {
-		log.Fatalf("Failed to schedule expired reservations check cron job: %v", err)
-	}
-
+	// 移除預約超時檢查（因無預約需求）
+	// 可保留空殼以供未來擴展
 	c.Start()
 	log.Println("Cron jobs started")
 
@@ -106,23 +90,21 @@ func ensureAdminExists() {
 	}
 
 	// 哈希密碼
-	hashedPassword, err := utils.HashPassword("default_password") // 假設預設密碼
+	hashedPassword, err := utils.HashPassword("adminjojo") // 假設預設密碼
 	if err != nil {
 		log.Fatalf("Failed to hash admin password: %v", err)
 	}
-	encryptedPayment, err := utils.EncryptPaymentInfo("9999-9595-9292-9090") // 加密預設信用卡號
+	encryptedPayment, err := utils.EncryptPaymentInfo("4758-1425-2536-5869") // 加密預設信用卡號
 	if err != nil {
 		log.Fatalf("Failed to encrypt payment info for admin: %v", err)
 	}
 	admin = models.Member{
-		MemberID:      1,
-		Name:          "adminjojo",
-		Email:         "adminjojo@gmail.com",
-		Phone:         "0936687137",
-		Password:      hashedPassword,
-		Role:          "admin",
-		PaymentMethod: "credit_card",
-		PaymentInfo:   encryptedPayment,
+		Email:        "adminjojo@gmail.com",
+		Phone:        "0936687137",
+		Password:     hashedPassword,
+		LicensePlate: "JOJ-0936", // 假設管理員車牌
+		PaymentInfo:  encryptedPayment,
+		Role:         "admin", // 設置為 admin
 	}
 	// 插入資料庫
 	if err := database.DB.Create(&admin).Error; err != nil {

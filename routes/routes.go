@@ -44,7 +44,6 @@ func AuthMiddleware() gin.HandlerFunc {
 		tokenString := parts[1]
 		log.Printf("Parsing token: %s", tokenString)
 
-		// 明確要求檢查 exp 字段
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, jwt.ErrSignatureInvalid
@@ -52,12 +51,8 @@ func AuthMiddleware() gin.HandlerFunc {
 			return utils.JWTSecret, nil
 		}, jwt.WithExpirationRequired())
 
-		// 添加詳細日誌
 		if err != nil {
 			log.Printf("Token parsing error: %v", err)
-			if claims, ok := token.Claims.(jwt.MapClaims); ok {
-				log.Printf("Token claims: exp=%v, current_time=%v", claims["exp"], time.Now().Unix())
-			}
 			if errors.Is(err, jwt.ErrTokenExpired) {
 				c.JSON(http.StatusUnauthorized, gin.H{
 					"status":  false,
@@ -77,9 +72,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// 檢查 Claims 是否有效
 		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-			// 確認 exp 字段存在
 			if exp, ok := claims["exp"].(float64); !ok {
 				log.Printf("Missing or invalid exp in token")
 				c.JSON(http.StatusUnauthorized, gin.H{
@@ -94,7 +87,6 @@ func AuthMiddleware() gin.HandlerFunc {
 				log.Printf("Token verified: exp=%v, current_time=%v", exp, time.Now().Unix())
 			}
 
-			// 確認 member_id 字段
 			memberID, ok := claims["member_id"].(float64)
 			if !ok {
 				log.Printf("Missing or invalid member_id in token")
@@ -108,9 +100,8 @@ func AuthMiddleware() gin.HandlerFunc {
 				return
 			}
 
-			// 確認 role 字段
 			role, ok := claims["role"].(string)
-			if !ok || (role != "renter" && role != "shared_owner" && role != "admin") {
+			if !ok || (role != "renter" && role != "admin") { // 移除 shared_owner
 				log.Printf("Missing or invalid role in token: %v", role)
 				c.JSON(http.StatusUnauthorized, gin.H{
 					"status":  false,
@@ -124,7 +115,7 @@ func AuthMiddleware() gin.HandlerFunc {
 
 			log.Printf("Token verified for member_id: %d, role: %s", int(memberID), role)
 			c.Set("member_id", int(memberID))
-			c.Set("role", role) // 將 role 存入上下文
+			c.Set("role", role)
 		} else {
 			log.Printf("Invalid token claims or token is not valid")
 			c.JSON(http.StatusUnauthorized, gin.H{
@@ -261,7 +252,7 @@ func MemberRentHistoryMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// 權限檢查
+		// 權限檢查：僅 admin 或自己可查詢
 		if roleStr != "admin" && currentMemberIDInt != requestedMemberID {
 			c.JSON(http.StatusForbidden, gin.H{
 				"status":  false,
@@ -283,86 +274,56 @@ func Path(router *gin.RouterGroup) {
 	{
 		// 測試路由
 		v1.GET("/ping", func(c *gin.Context) {
-			c.JSON(200, gin.H{"message": "pong"})
+			c.JSON(http.StatusOK, gin.H{"message": "pong"})
 		})
 
-		// 往後端傳資料不要用GET(蘇老師交代)
 		// 會員路由
 		members := v1.Group("/members")
 		{
 			// 公開路由：不需要 token 驗證
-			members.POST("/register", handlers.RegisterMember) // 註冊會員
-			members.POST("/login", handlers.LoginMember)       // 登入會員並獲取 token
+			members.POST("/register", handlers.RegisterMember)
+			members.POST("/login", handlers.LoginMember)
 
 			// 受保護路由：需要 token 驗證
 			membersWithAuth := members.Group("")
 			membersWithAuth.Use(AuthMiddleware())
 			{
-				// 查看個人資料：任何已認證的用戶都可以訪問
-				membersWithAuth.GET("/profile", handlers.GetMemberProfile)
-				// 管理員專屬路由
-				membersWithAuth.GET("/all", RoleMiddleware("admin"), handlers.GetAllMembers)                      // 查詢所有會員
-				membersWithAuth.GET("/:id", RoleMiddleware("admin"), handlers.GetMember)                          // 查詢特定會員
-				membersWithAuth.GET("/:id/history", MemberRentHistoryMiddleware(), handlers.GetMemberRentHistory) // 查詢特定會員的租賃歷史記錄
-				membersWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateMember)                       // 更新會員資料
-				membersWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteMember)                    // 刪除會員
-				// 新增：更新車牌號碼
-				membersWithAuth.POST("/update-license", handlers.UpdateLicensePlate) // 更新車牌號碼
+				membersWithAuth.GET("/profile", RoleMiddleware("renter"), handlers.GetMemberProfile)
+				membersWithAuth.GET("/all", RoleMiddleware("admin"), handlers.GetAllMembers)
+				membersWithAuth.GET("/:id", RoleMiddleware("admin"), handlers.GetMember)
+				membersWithAuth.GET("/:id/history", MemberRentHistoryMiddleware(), handlers.GetMemberRentHistory)
+				membersWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateMember)
+				membersWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteMember)
+				membersWithAuth.PUT("/:id/license-plate", RoleMiddleware("renter"), handlers.UpdateLicensePlate)
 			}
 		}
 
 		// 車位路由
 		parking := v1.Group("/parking")
 		{
-			// 公開路由：不需要 token 驗證
-			// 根據需求，共享車位需要驗證並限制為 shared_owner 或 admin
 			parkingWithAuth := parking.Group("")
 			parkingWithAuth.Use(AuthMiddleware())
 			{
-				// 共享車位：僅 shared_owner 和 admin 可以操作
-				parkingWithAuth.POST("/share", RoleMiddleware("shared_owner", "admin"), handlers.ShareParkingSpot)
-				// 查詢我的車位（shared_owner 和 admin 都可以訪問）
-				parkingWithAuth.GET("/my-spots", RoleMiddleware("shared_owner", "admin"), handlers.GetMyParkingSpots)
-				// 查詢可用車位：renter 和 shared_owner 都可以訪問
-				parkingWithAuth.GET("/available", RoleMiddleware("renter", "shared_owner", "admin"), handlers.GetAvailableParkingSpots)
-				// 查詢特定車位：renter 和 shared_owner 都可以訪問
-				parkingWithAuth.GET("/:id", RoleMiddleware("renter", "shared_owner"), handlers.GetParkingSpot)
-				// 查看會員所有車位收入：shared_owner 和 admin 都可以訪問
-				parkingWithAuth.GET("/income", RoleMiddleware("shared_owner", "admin"), handlers.GetParkingSpotIncome)
-				// 更新車位：僅 shared_owner 和 admin 可以操作
-				parkingWithAuth.PUT("/:id", RoleMiddleware("shared_owner", "admin"), handlers.UpdateParkingSpot)
-				// 刪除車位：僅 shared_owner 和 admin 可以操作
-				parkingWithAuth.DELETE("/:id", RoleMiddleware("shared_owner", "admin"), handlers.DeleteParkingSpot)
+				parkingWithAuth.GET("/available", RoleMiddleware("renter", "admin"), handlers.GetAvailableParkingLots)
+				parkingWithAuth.GET("/:id", RoleMiddleware("renter", "admin"), handlers.GetParkingLot)
 			}
 		}
 
 		// 租用路由
 		rent := v1.Group("/rent")
 		{
-			// 受保護路由：需要 token 驗證
 			rentWithAuth := rent.Group("")
 			rentWithAuth.Use(AuthMiddleware())
 			{
-				// 租用車位：renter 和 shared_owner 都可以操作
-				rentWithAuth.POST("", RoleMiddleware("renter", "shared_owner"), handlers.RentParkingSpot)
-				// 預約車位：僅 renter 可以操作
-				rentWithAuth.POST("/reserve", RoleMiddleware("renter"), handlers.ReserveParkingSpot)
-				// 確認預約：僅 renter 可以操作
-				rentWithAuth.POST("/:id/confirm", RoleMiddleware("renter"), handlers.ConfirmReservation)
-				// 離開結算：renter 和 shared_owner 都可以操作
-				rentWithAuth.POST("/:id/leave", RoleMiddleware("renter", "shared_owner"), handlers.LeaveAndPay)
-				// 新增：生成通知
-				rentWithAuth.POST("/:id/notify", RoleMiddleware("renter"), handlers.GenerateParkingNotification)
-				// 新增查詢目前租用中的車位
-				rentWithAuth.GET("/currently-rented", RoleMiddleware("renter", "admin"), handlers.GetCurrentlyRentedSpots)
-				// 查詢所有租賃記錄：renter 和 shared_owner 都可以訪問
-				rentWithAuth.GET("", RoleMiddleware("renter", "shared_owner"), handlers.GetRentRecords)
-				// 查詢特定租賃記錄：renter 和 shared_owner 都可以訪問
-				rentWithAuth.GET("/:id", RoleMiddleware("renter", "shared_owner"), handlers.GetRentByID)
-				// 查詢所有預約記錄：renter 和 shared_owner 都可以訪問
-				rentWithAuth.GET("/reservations", RoleMiddleware("renter", "shared_owner"), handlers.GetAllReservations)
-				// 取消租用：renter 和 shared_owner 都可以操作
-				rentWithAuth.DELETE("/:id", RoleMiddleware("renter", "shared_owner"), handlers.CancelRent)
+				rentWithAuth.POST("", RoleMiddleware("renter"), handlers.EnterParkingSpot)                        // 替換 RentParkingSpot
+				rentWithAuth.POST("/:id/leave", RoleMiddleware("renter"), handlers.LeaveParkingSpot)              // 替換 LeaveAndPay
+				rentWithAuth.POST("/:id/notify", RoleMiddleware("renter"), handlers.GenerateParkingNotification)  // 新增
+				rentWithAuth.GET("/currently-rented", RoleMiddleware("renter"), handlers.GetCurrentlyRentedSpots) // 新增
+				rentWithAuth.GET("", RoleMiddleware("renter"), handlers.GetRentRecordsByLicensePlate)             // 替換 GetRentRecords
+				rentWithAuth.GET("/:id", RoleMiddleware("renter"), handlers.GetRentByID)                          // 新增
+				// 新增路由
+				rentWithAuth.GET("/total-cost", RoleMiddleware("renter"), handlers.GetTotalCostByLicensePlate)
+				rentWithAuth.GET("/availability", RoleMiddleware("renter", "admin"), handlers.CheckParkingAvailability)
 			}
 		}
 	}

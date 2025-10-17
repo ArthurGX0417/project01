@@ -1,7 +1,6 @@
 package services
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -38,12 +37,9 @@ func RegisterMember(member *models.Member) error {
 		return fmt.Errorf("password must be at least 8 characters and include both letters and numbers")
 	}
 
-	// 驗證 payment_method 和 role
-	if member.PaymentMethod != "credit_card" && member.PaymentMethod != "e_wallet" {
-		return fmt.Errorf("invalid payment_method: must be 'credit_card' or 'e_wallet'")
-	}
-	if member.Role != "shared_owner" && member.Role != "renter" {
-		return fmt.Errorf("invalid role: must be 'shared_owner' or 'renter'")
+	// 驗證 role
+	if member.Role != "renter" && member.Role != "admin" {
+		return fmt.Errorf("invalid role: must be 'renter' or 'admin'")
 	}
 
 	// 哈希密碼
@@ -110,11 +106,7 @@ func LoginMember(email, phone, password string) (*models.Member, error) {
 // GetMemberByID 根據ID查詢會員
 func GetMemberByID(id int) (*models.Member, error) {
 	var member models.Member
-	if err := database.DB.
-		Preload("Spots").               // 修正為 Spots
-		Preload("Spots.AvailableDays"). // 預載停車位的可用日期
-		Preload("Rents").
-		First(&member, id).Error; err != nil {
+	if err := database.DB.First(&member, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			log.Printf("Member with ID %d not found", id)
 			return nil, nil
@@ -168,23 +160,13 @@ func GetMemberProfileData(memberID int) (*models.Member, error) {
 // GetAllMembers 查詢所有會員
 func GetAllMembers() ([]models.Member, error) {
 	var members []models.Member
-	if err := database.DB.
-		Preload("Spots").
-		Preload("Spots.AvailableDays").
-		Preload("Rents").
-		Find(&members).Error; err != nil {
+	if err := database.DB.Find(&members).Error; err != nil {
 		log.Printf("Failed to query all members: %v", err)
 		return nil, fmt.Errorf("failed to query all members: %w", err)
 	}
 
 	for i := range members {
 		if members[i].PaymentInfo != "" {
-			_, err := base64.StdEncoding.DecodeString(members[i].PaymentInfo)
-			if err != nil {
-				log.Printf("payment_info for member %d is not a valid Base64 string: %v", members[i].MemberID, err)
-				continue
-			}
-
 			decryptedPaymentInfo, err := utils.DecryptPaymentInfo(members[i].PaymentInfo)
 			if err != nil {
 				log.Printf("Failed to decrypt payment_info for member %d: %v", members[i].MemberID, err)
@@ -218,8 +200,6 @@ func UpdateMember(id int, updatedFields map[string]interface{}) error {
 		case "member_id":
 			// 防止更新主鍵
 			return fmt.Errorf("cannot update member_id")
-		case "name":
-			mappedFields["name"] = value
 		case "phone":
 			phoneStr, ok := value.(string)
 			if !ok {
@@ -255,19 +235,10 @@ func UpdateMember(id int, updatedFields map[string]interface{}) error {
 			if !ok {
 				return fmt.Errorf("invalid role type: must be a string")
 			}
-			if roleStr != "shared_owner" && roleStr != "renter" {
-				return fmt.Errorf("invalid role: must be 'shared_owner' or 'renter'")
+			if roleStr != "renter" && roleStr != "admin" {
+				return fmt.Errorf("invalid role: must be 'renter' or 'admin'")
 			}
 			mappedFields["role"] = roleStr
-		case "payment_method":
-			paymentMethodStr, ok := value.(string)
-			if !ok {
-				return fmt.Errorf("invalid payment_method type: must be a string")
-			}
-			if paymentMethodStr != "credit_card" && paymentMethodStr != "e_wallet" {
-				return fmt.Errorf("invalid payment_method: must be 'credit_card' or 'e_wallet'")
-			}
-			mappedFields["payment_method"] = paymentMethodStr
 		case "payment_info":
 			paymentInfoStr, ok := value.(string)
 			if !ok {
@@ -278,16 +249,8 @@ func UpdateMember(id int, updatedFields map[string]interface{}) error {
 				return fmt.Errorf("failed to encrypt payment_info: %w", err)
 			}
 			mappedFields["payment_info"] = encryptedPaymentInfo
-		case "auto_monthly_payment":
-			autoMonthlyPayment, ok := value.(bool)
-			if !ok {
-				return fmt.Errorf("invalid auto_monthly_payment type: must be a boolean")
-			}
-			mappedFields["auto_monthly_payment"] = autoMonthlyPayment
 		case "license_plate":
 			mappedFields["license_plate"] = value
-		case "car_model":
-			mappedFields["car_model"] = value
 		case "email":
 			emailStr, ok := value.(string)
 			if !ok {
@@ -302,12 +265,6 @@ func UpdateMember(id int, updatedFields map[string]interface{}) error {
 				return fmt.Errorf("failed to check for duplicate email: %w", err)
 			}
 			mappedFields["email"] = emailStr
-		case "wifi_verified":
-			wifiVerified, ok := value.(bool)
-			if !ok {
-				return fmt.Errorf("invalid wifi_verified type: must be a boolean")
-			}
-			mappedFields["wifi_verified"] = wifiVerified
 		default:
 			return fmt.Errorf("invalid field: %s", key)
 		}
@@ -353,44 +310,13 @@ func DeleteMember(id int) error {
 		return fmt.Errorf("failed to delete rents for member %d: %w", id, err)
 	}
 
-	// 查找所有相關的 parking_spots
-	var parkingSpots []models.ParkingSpot
-	if err := tx.Where("member_id = ?", id).Find(&parkingSpots).Error; err != nil {
-		tx.Rollback()
-		log.Printf("Failed to find parking spots for member %d: %v", id, err)
-		return fmt.Errorf("failed to find parking spots for member %d: %w", id, err)
-	}
-
-	// 收集所有 parking_spot 的 ID
-	spotIDs := make([]int, len(parkingSpots))
-	for i, spot := range parkingSpots {
-		spotIDs[i] = spot.SpotID
-	}
-
-	// 刪除相關的 parking_spot_available_days
-	if len(spotIDs) > 0 {
-		if err := tx.Where("parking_spot_id IN ?", spotIDs).Delete(&models.ParkingSpotAvailableDay{}).Error; err != nil {
-			tx.Rollback()
-			log.Printf("Failed to delete parking spot available days for member %d: %v", id, err)
-			return fmt.Errorf("failed to delete parking spot available days for member %d: %w", id, err)
-		}
-	}
-
-	// 刪除相關的 parking_spots
-	if err := tx.Where("member_id = ?", id).Delete(&models.ParkingSpot{}).Error; err != nil {
-		tx.Rollback()
-		log.Printf("Failed to delete parking spots for member %d: %v", id, err)
-		return fmt.Errorf("failed to delete parking spots for member %d: %w", id, err)
-	}
-
-	// 刪除會員
+	// 提交事務
 	if err := tx.Delete(&member).Error; err != nil {
 		tx.Rollback()
 		log.Printf("Failed to delete member: %v", err)
 		return fmt.Errorf("failed to delete member with ID %d: %w", id, err)
 	}
 
-	// 提交事務
 	if err := tx.Commit().Error; err != nil {
 		log.Printf("Failed to commit transaction for member deletion: %v", err)
 		return fmt.Errorf("failed to commit transaction for member deletion: %w", err)
@@ -405,8 +331,6 @@ func GetMemberRentHistory(memberID int) ([]models.Rent, error) {
 	var rents []models.Rent
 	if err := database.DB.
 		Preload("ParkingSpot").
-		Preload("ParkingSpot.Member").
-		Preload("Member").
 		Where("member_id = ?", memberID).
 		Find(&rents).Error; err != nil {
 		log.Printf("Failed to get rent history for member %d: %v", memberID, err)

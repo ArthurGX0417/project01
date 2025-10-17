@@ -20,7 +20,7 @@ type APIResponse struct {
 func SuccessResponse(c *gin.Context, statusCode int, message string, data interface{}) {
 	if statusCode < 200 || statusCode >= 300 {
 		log.Printf("Warning: SuccessResponse called with invalid status code %d, should be 2xx", statusCode)
-		ErrorResponse(c, http.StatusInternalServerError, "內部伺服器錯誤", "無效的成功狀態碼", "ERR_INVALID_STATUS_CODE")
+		ErrorResponse(c, http.StatusInternalServerError, "內部伺服器錯誤", "無效的成功狀態碼")
 		return
 	}
 

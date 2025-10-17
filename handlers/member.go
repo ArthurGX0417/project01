@@ -23,7 +23,7 @@ var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]
 // 電話驗證字串 (例如：10 位數)
 var phoneRegex = regexp.MustCompile(`^[0-9]{10}$`)
 
-// 註冊會員資料檢查（保持不變）
+// 註冊會員資料檢查
 func RegisterMember(c *gin.Context) {
 	var member models.Member
 	if err := c.ShouldBindJSON(&member); err != nil {
@@ -50,18 +50,13 @@ func RegisterMember(c *gin.Context) {
 		return
 	}
 
-	if member.PaymentMethod != "credit_card" && member.PaymentMethod != "e_wallet" {
-		ErrorResponse(c, http.StatusBadRequest, "payment_method 必須是 'credit_card' 或 'e_wallet'", "invalid payment_method")
-		return
-	}
-
 	if member.PaymentInfo == "" {
 		ErrorResponse(c, http.StatusBadRequest, "請提供 payment_info", "payment_info is required")
 		return
 	}
 
 	// 驗證並設置 role（不允許註冊為 admin）
-	if member.Role != "shared_owner" && member.Role != "renter" {
+	if member.Role != "renter" {
 		member.Role = "renter" // 預設為 renter
 	}
 	if member.Role == "admin" {
@@ -138,7 +133,7 @@ func LoginMember(c *gin.Context) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"member_id": member.MemberID,
-		"role":      member.Role, // 加入 role
+		"role":      member.Role,
 		"exp":       time.Now().Add(time.Hour * 24).Unix(),
 	})
 
@@ -150,7 +145,6 @@ func LoginMember(c *gin.Context) {
 	}
 
 	log.Printf("Member logged in successfully: email=%s, member_id=%d, role=%s", member.Email, member.MemberID, member.Role)
-
 	SuccessResponse(c, http.StatusOK, "登入成功", gin.H{
 		"token":  tokenString,
 		"member": member.ToResponse(),
@@ -179,7 +173,7 @@ func GetMember(c *gin.Context) {
 		return
 	}
 
-	SuccessResponse(c, http.StatusOK, "查詢成功", member.ToResponseWithSpots(member.Spots))
+	SuccessResponse(c, http.StatusOK, "查詢成功", member.ToResponse())
 }
 
 // 查詢所有會員資料檢查
@@ -192,10 +186,9 @@ func GetAllMembers(c *gin.Context) {
 	}
 
 	log.Printf("Successfully retrieved %d members", len(members))
-
 	memberResponses := make([]models.MemberResponse, len(members))
 	for i, member := range members {
-		memberResponses[i] = member.ToResponseWithSpots(member.Spots)
+		memberResponses[i] = member.ToResponse()
 	}
 
 	SuccessResponse(c, http.StatusOK, "查詢成功", memberResponses)
@@ -236,7 +229,7 @@ func UpdateMember(c *gin.Context) {
 		return
 	}
 
-	SuccessResponse(c, http.StatusOK, "更新成功", updatedMember.ToResponseWithSpots(updatedMember.Spots))
+	SuccessResponse(c, http.StatusOK, "更新成功", updatedMember.ToResponse())
 }
 
 // 刪除會員資料檢查
@@ -306,7 +299,6 @@ func UpdateLicensePlate(c *gin.Context) {
 		return
 	}
 
-	// 從 JWT 獲取當前 member_id（由 AuthMiddleware 提供）
 	currentMemberID, exists := c.Get("member_id")
 	if !exists {
 		log.Printf("Member ID not found in token")
@@ -320,7 +312,6 @@ func UpdateLicensePlate(c *gin.Context) {
 		return
 	}
 
-	// 呼叫服務層更新車牌
 	if err := services.UpdateLicensePlate(currentMemberIDInt, input.LicensePlate); err != nil {
 		log.Printf("Failed to update license plate: %v", err)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -331,9 +322,68 @@ func UpdateLicensePlate(c *gin.Context) {
 		return
 	}
 
-	// 成功回應
 	SuccessResponse(c, http.StatusOK, "車牌更新成功", gin.H{
 		"member_id":     currentMemberIDInt,
 		"license_plate": input.LicensePlate,
 	})
+}
+
+// GetMemberRentHistory 查詢特定會員的租賃歷史記錄
+func GetMemberRentHistory(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		log.Printf("Invalid member ID: %v", err)
+		ErrorResponse(c, http.StatusBadRequest, "無效的會員ID", err.Error())
+		return
+	}
+
+	// 從中介件中獲取當前會員ID進行權限檢查
+	currentMemberID, exists := c.Get("member_id")
+	if !exists {
+		log.Printf("Member ID not found in token")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found in token")
+		return
+	}
+	currentMemberIDInt, ok := currentMemberID.(int)
+	if !ok {
+		log.Printf("Invalid member_id type in context")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid member_id type")
+		return
+	}
+
+	// 權限檢查：僅當前會員或 admin 可以查詢
+	role, exists := c.Get("role")
+	if !exists {
+		log.Printf("Role not found in token")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "role not found in token")
+		return
+	}
+	roleStr, ok := role.(string)
+	if !ok {
+		log.Printf("Invalid role type in context")
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "invalid role type")
+		return
+	}
+	if roleStr != "admin" && currentMemberIDInt != id {
+		log.Printf("Insufficient permissions for member %d to access member %d's history", currentMemberIDInt, id)
+		ErrorResponse(c, http.StatusForbidden, "無權限", "you can only view your own rent history")
+		return
+	}
+
+	rents, err := services.GetMemberRentHistory(id)
+	if err != nil {
+		log.Printf("Failed to get rent history for member %d: %v", id, err)
+		ErrorResponse(c, http.StatusInternalServerError, "查詢租賃歷史失敗", err.Error())
+		return
+	}
+
+	// 將 rents 轉換為回應格式（假設 Rent 已有 ToResponse 方法）
+	rentResponses := make([]models.RentResponse, len(rents))
+	for i, rent := range rents {
+		rentResponses[i] = rent.ToResponse()
+	}
+
+	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)
+	log.Printf("Successfully retrieved rent history for member %d", id)
 }

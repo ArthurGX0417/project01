@@ -17,6 +17,7 @@ import (
 // RentInput 定義用於綁定請求的輸入結構體
 type RentInput struct {
 	LicensePlate string `json:"license_plate" binding:"required"`
+	ParkingLotID int    `json:"parking_lot_id" binding:"required,min=1"` // 新增，必填>0
 	StartTime    string `json:"start_time" binding:"required"`
 }
 
@@ -69,7 +70,7 @@ func EnterParkingSpot(c *gin.Context) {
 		return
 	}
 
-	if err := services.EnterParkingSpot(input.LicensePlate, startTime); err != nil {
+	if err := services.EnterParkingSpot(input.LicensePlate, input.ParkingLotID, startTime); err != nil {
 		log.Printf("Failed to enter parking spot: license_plate=%s, error=%v", input.LicensePlate, err)
 		ErrorResponse(c, http.StatusInternalServerError, "進場失敗", err.Error())
 		return

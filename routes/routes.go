@@ -4,7 +4,9 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"project01/database"
 	"project01/handlers"
+	"project01/models"
 	"project01/utils"
 	"strconv"
 	"strings"
@@ -188,6 +190,58 @@ func RoleMiddleware(allowedRoles ...string) gin.HandlerFunc {
 	}
 }
 
+// 在routes.go的AuthMiddleware()和RoleMiddleware()後添加
+func LicenseMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		memberID, exists := c.Get("member_id")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "未授權",
+				"error":   "member_id not found in token",
+				"code":    "ERR_NO_MEMBER_ID",
+			})
+			c.Abort()
+			return
+		}
+		memberIDInt, ok := memberID.(int)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "未授權",
+				"error":   "invalid member_id type",
+				"code":    "ERR_INVALID_MEMBER_ID_TYPE",
+			})
+			c.Abort()
+			return
+		}
+
+		var member models.Member
+		if err := database.DB.First(&member, memberIDInt).Error; err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  false,
+				"message": "無法獲取會員資訊",
+				"error":   err.Error(),
+				"code":    "ERR_MEMBER_NOT_FOUND",
+			})
+			c.Abort()
+			return
+		}
+		if member.LicensePlate == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  false,
+				"message": "會員無車牌資訊",
+				"error":   "license_plate is empty",
+				"code":    "ERR_NO_LICENSE_PLATE",
+			})
+			c.Abort()
+			return
+		}
+		c.Set("license_plate", member.LicensePlate)
+		c.Next()
+	}
+}
+
 // MemberRentHistoryMiddleware 檢查會員是否有權訪問租賃歷史
 func MemberRentHistoryMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -281,20 +335,20 @@ func Path(router *gin.RouterGroup) {
 		members := v1.Group("/members")
 		{
 			// 公開路由：不需要 token 驗證
-			members.POST("/register", handlers.RegisterMember)
-			members.POST("/login", handlers.LoginMember)
+			members.POST("/register", handlers.RegisterMember) //註冊
+			members.POST("/login", handlers.LoginMember)       //登入
 
 			// 受保護路由：需要 token 驗證
 			membersWithAuth := members.Group("")
 			membersWithAuth.Use(AuthMiddleware())
 			{
-				membersWithAuth.GET("/profile", RoleMiddleware("renter"), handlers.GetMemberProfile)
-				membersWithAuth.GET("/all", RoleMiddleware("admin"), handlers.GetAllMembers)
-				membersWithAuth.GET("/:id", RoleMiddleware("admin"), handlers.GetMember)
-				membersWithAuth.GET("/:id/history", MemberRentHistoryMiddleware(), handlers.GetMemberRentHistory)
-				membersWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateMember)
-				membersWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteMember)
-				membersWithAuth.PUT("/:id/license-plate", RoleMiddleware("renter"), handlers.UpdateLicensePlate)
+				membersWithAuth.GET("/profile", RoleMiddleware("renter"), handlers.GetMemberProfile)              //查看個人資料
+				membersWithAuth.GET("/all", RoleMiddleware("admin"), handlers.GetAllMembers)                      //查詢所有會員
+				membersWithAuth.GET("/:id", RoleMiddleware("admin"), handlers.GetMember)                          //查詢特定會員
+				membersWithAuth.GET("/:id/history", MemberRentHistoryMiddleware(), handlers.GetMemberRentHistory) //查詢特定會員的租賃記錄
+				membersWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateMember)                       //更新特定會員的資訊
+				membersWithAuth.PUT("/:id/license-plate", RoleMiddleware("renter"), handlers.UpdateLicensePlate)  //更新車牌號碼
+				membersWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteMember)                    //刪除特定會員
 			}
 		}
 
@@ -304,8 +358,8 @@ func Path(router *gin.RouterGroup) {
 			parkingWithAuth := parking.Group("")
 			parkingWithAuth.Use(AuthMiddleware())
 			{
-				parkingWithAuth.GET("/available", RoleMiddleware("renter", "admin"), handlers.GetAvailableParkingLots)
-				parkingWithAuth.GET("/:id", RoleMiddleware("renter", "admin"), handlers.GetParkingLot)
+				parkingWithAuth.GET("/available", RoleMiddleware("renter", "admin"), handlers.GetAvailableParkingLots) //查詢可用停車場
+				parkingWithAuth.GET("/:id", RoleMiddleware("renter", "admin"), handlers.GetParkingLot)                 //查詢特定停車場詳情 (剩餘位子、經緯度)
 			}
 		}
 
@@ -313,17 +367,16 @@ func Path(router *gin.RouterGroup) {
 		rent := v1.Group("/rent")
 		{
 			rentWithAuth := rent.Group("")
-			rentWithAuth.Use(AuthMiddleware())
+			rentWithAuth.Use(AuthMiddleware(), RoleMiddleware("renter"), LicenseMiddleware()) // 添加LicenseMiddleware，只限renter路由
 			{
-				rentWithAuth.POST("", RoleMiddleware("renter"), handlers.EnterParkingSpot)                        // 替換 RentParkingSpot
-				rentWithAuth.POST("/:id/leave", RoleMiddleware("renter"), handlers.LeaveParkingSpot)              // 替換 LeaveAndPay
-				rentWithAuth.POST("/:id/notify", RoleMiddleware("renter"), handlers.GenerateParkingNotification)  // 新增
-				rentWithAuth.GET("/currently-rented", RoleMiddleware("renter"), handlers.GetCurrentlyRentedSpots) // 新增
-				rentWithAuth.GET("", RoleMiddleware("renter"), handlers.GetRentRecordsByLicensePlate)             // 替換 GetRentRecords
-				rentWithAuth.GET("/:id", RoleMiddleware("renter"), handlers.GetRentByID)                          // 新增
-				// 新增路由
-				rentWithAuth.GET("/total-cost", RoleMiddleware("renter"), handlers.GetTotalCostByLicensePlate)
-				rentWithAuth.GET("/availability", RoleMiddleware("renter", "admin"), handlers.CheckParkingAvailability)
+				rentWithAuth.POST("", RoleMiddleware("renter"), handlers.EnterParkingSpot)                              //租用車位（車牌掃描輸入）
+				rentWithAuth.POST("/leave", RoleMiddleware("renter"), handlers.LeaveParkingSpot)                        //離開結算（車牌掃描輸入）
+				rentWithAuth.POST("/:id/notify", RoleMiddleware("renter"), handlers.GenerateParkingNotification)        //停車結算通知
+				rentWithAuth.GET("/currently-rented", RoleMiddleware("renter"), handlers.GetCurrentlyRentedSpots)       //查詢當前租用的車位
+				rentWithAuth.GET("", RoleMiddleware("renter"), handlers.GetRentRecordsByLicensePlate)                   //查詢租用紀錄
+				rentWithAuth.GET("/:id", RoleMiddleware("renter"), handlers.GetRentByID)                                //查詢特定租賃記錄
+				rentWithAuth.GET("/total-cost", RoleMiddleware("renter"), handlers.GetTotalCostByLicensePlate)          //查詢總費用
+				rentWithAuth.GET("/availability", RoleMiddleware("renter", "admin"), handlers.CheckParkingAvailability) //檢查停車場可用性
 			}
 		}
 	}

@@ -7,29 +7,18 @@ import (
 	"project01/models"
 	"project01/services"
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
+// GetAvailableParkingLots 查詢可用停車場
 func GetAvailableParkingLots(c *gin.Context) {
 	// 獲取查詢參數
-	dateStr := c.Query("date")
 	latitudeStr := c.Query("latitude")
 	longitudeStr := c.Query("longitude")
 	radiusStr := c.Query("radius")
 
-	log.Printf("Received request with date: %s, latitude: %s, longitude: %s, radius: %s", dateStr, latitudeStr, longitudeStr, radiusStr)
-
-	// 驗證 date 參數
-	if dateStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  false,
-			"message": "查詢失敗",
-			"error":   "請提供 date 參數（格式為 YYYY-MM-DD）",
-		})
-		return
-	}
+	log.Printf("Received request with latitude: %s, longitude: %s, radius: %s", latitudeStr, longitudeStr, radiusStr)
 
 	// 驗證 latitude 和 longitude 參數
 	if latitudeStr == "" || longitudeStr == "" {
@@ -79,45 +68,31 @@ func GetAvailableParkingLots(c *gin.Context) {
 	}
 
 	// 調用服務層函數
-	parkingLots, err := services.GetAvailableParkingLots(dateStr, latitude, longitude, radius)
+	parkingLots, err := services.GetAvailableParkingLots(latitude, longitude, radius)
 	if err != nil {
 		log.Printf("Failed to get parking lots: %v", err)
-		if strings.Contains(err.Error(), "invalid date format") {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status":  false,
-				"message": "查詢失敗",
-				"error":   "無效的日期格式，應為 YYYY-MM-DD",
-			})
-		} else if strings.Contains(err.Error(), "date must be today or in the future") {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status":  false,
-				"message": "查詢失敗",
-				"error":   "日期必須為今天或未來的日期",
-			})
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  false,
-				"message": "查詢失敗",
-				"error":   fmt.Sprintf("failed to get parking lots: %v", err),
-			})
-		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "查詢失敗",
+			"error":   fmt.Sprintf("failed to get parking lots: %v", err),
+		})
 		return
 	}
 
-	log.Printf("Found %d parking lots available for date %s", len(parkingLots), dateStr)
+	log.Printf("Found %d parking lots available", len(parkingLots))
 
 	if len(parkingLots) == 0 {
-		message := fmt.Sprintf("所選條件（日期：%s，經緯度：%s, %s）目前沒有符合的停車場！請調整篩選條件。", dateStr, latitudeStr, longitudeStr)
+		message := fmt.Sprintf("所選條件（經緯度：%s, %s）目前沒有符合的停車場！請調整篩選條件。", latitudeStr, longitudeStr)
 		c.JSON(http.StatusOK, gin.H{
 			"status":  false,
 			"message": message,
-			"data":    []models.ParkingSpot{},
+			"data":    []models.ParkingLotResponse{},
 		})
 		return
 	}
 
 	// 轉換為回應格式
-	availableLotsResponse := make([]models.ParkingSpotResponse, len(parkingLots))
+	availableLotsResponse := make([]models.ParkingLotResponse, len(parkingLots))
 	for i, lot := range parkingLots {
 		availableLotsResponse[i] = lot.ToResponse()
 	}
@@ -129,6 +104,7 @@ func GetAvailableParkingLots(c *gin.Context) {
 	})
 }
 
+// GetParkingLot 查詢特定停車場詳情
 func GetParkingLot(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)

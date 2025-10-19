@@ -6,14 +6,13 @@ import (
 	"log"
 	"project01/database"
 	"project01/models"
-	"time"
 
 	"gorm.io/gorm"
 )
 
-// GetAvailableParkingLots 查詢可用停車場，基於日期和經緯度
-func GetAvailableParkingLots(date string, latitude, longitude, radius float64) ([]models.ParkingSpot, error) {
-	var spots []models.ParkingSpot
+// GetAvailableParkingLots 查詢可用停車場，基於經緯度和半徑（即時可用，無日期）
+func GetAvailableParkingLots(latitude, longitude, radius float64) ([]models.ParkingLot, error) {
+	var lots []models.ParkingLot
 
 	if radius <= 0 {
 		radius = 3.0
@@ -24,68 +23,48 @@ func GetAvailableParkingLots(date string, latitude, longitude, radius float64) (
 
 	distanceSQL := `
         6371 * acos(
-            cos(radians(?)) * cos(radians(parking_lot.latitude)) * 
-            cos(radians(parking_lot.longitude) - radians(?)) + 
-            sin(radians(?)) * sin(radians(parking_lot.latitude))
+            cos(radians(?)) * cos(radians(latitude)) * 
+            cos(radians(longitude) - radians(?)) + 
+            sin(radians(?)) * sin(radians(latitude))
         )
     `
 
-	now := time.Now().UTC()
-	parsedDate, err := time.Parse("2006-01-02", date)
-	if err != nil {
-		return nil, fmt.Errorf("invalid date format: %w", err)
-	}
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	if parsedDate.Before(today) {
-		return nil, fmt.Errorf("date must be today or in the future: %s", date)
+	// 查詢在半徑內的停車場
+	query := database.DB.Where(distanceSQL+" <= ?", latitude, longitude, latitude, radius)
+	if err := query.Find(&lots).Error; err != nil {
+		log.Printf("Failed to query parking lots: %v", err)
+		return nil, fmt.Errorf("failed to query parking lots: %w", err)
 	}
 
-	startOfDay := time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, time.UTC)
-	endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Nanosecond)
-
-	var rentedSpotIDs []int
-	if err := database.DB.Model(&models.Rent{}).
-		Select("spot_id").
-		Where("(actual_end_time IS NULL AND end_time >= ?) OR (end_time > ? AND start_time < ?)", now, startOfDay, endOfDay).
-		Where("status NOT IN (?, ?)", "canceled", "completed").
-		Distinct().
-		Scan(&rentedSpotIDs).Error; err != nil {
-		log.Printf("Failed to query rented spot IDs: %v", err)
-		return nil, fmt.Errorf("failed to query rented spot IDs: %w", err)
-	}
-	log.Printf("Rented spot IDs for date %s: %v", date, rentedSpotIDs)
-
-	query := database.DB.
-		Joins("JOIN parking_lot ON parking_spot.parking_lot_id = parking_lot.parking_lot_id").
-		Where("parking_spot.status = ?", "available").
-		Where(distanceSQL+" <= ?", latitude, longitude, latitude, radius)
-
-	if len(rentedSpotIDs) > 0 {
-		log.Printf("Excluding rented spot IDs: %v", rentedSpotIDs)
-		query = query.Where("parking_spot.spot_id NOT IN (?)", rentedSpotIDs)
+	// 過濾並計算每個停車場的剩餘位子
+	filteredLots := []models.ParkingLot{}
+	for _, lot := range lots {
+		var availableCount int64
+		if err := database.DB.Model(&models.ParkingSpot{}).
+			Where("parking_lot_id = ? AND status = ?", lot.ParkingLotID, "available").
+			Count(&availableCount).Error; err != nil {
+			log.Printf("Failed to count available spots for lot ID %d: %v", lot.ParkingLotID, err)
+			continue // 錯誤時跳過
+		}
+		remaining := int(availableCount)
+		if remaining > 0 { // 只保留剩餘 > 0 的
+			lot.RemainingSpots = remaining
+			filteredLots = append(filteredLots, lot)
+		}
 	}
 
-	err = query.Find(&spots).Error
-	if err != nil {
-		log.Printf("Failed to query available parking lots: %v", err)
-		return nil, fmt.Errorf("failed to query available parking lots: %w", err)
+	if len(filteredLots) == 0 {
+		log.Printf("No available parking lots found within %f km", radius)
 	}
 
-	if len(spots) == 0 {
-		log.Printf("No parking lots found after filtering for date %s", date)
-		return spots, nil
-	}
-
-	log.Printf("Successfully retrieved %d available parking lots within %f km", len(spots), radius)
-	return spots, nil
+	log.Printf("Successfully retrieved %d available parking lots within %f km", len(filteredLots), radius)
+	return filteredLots, nil
 }
 
-// GetParkingLotByID 查詢特定停車場（實際查詢 parking_spot 並聯繫 parking_lot）
-func GetParkingLotByID(id int) (*models.ParkingSpot, error) {
-	var spot models.ParkingSpot
-	if err := database.DB.
-		Joins("JOIN parking_lot ON parking_spot.parking_lot_id = parking_lot.parking_lot_id").
-		First(&spot, "parking_spot.spot_id = ?", id).Error; err != nil {
+// GetParkingLotByID 查詢特定停車場詳情，包括剩餘位子數量
+func GetParkingLotByID(id int) (*models.ParkingLot, error) { // 改返回 *models.ParkingLot（lot 級）
+	var lot models.ParkingLot
+	if err := database.DB.First(&lot, id).Error; err != nil { // 直接查 parking_lot
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("Parking lot with ID %d not found", id)
 			return nil, nil
@@ -94,6 +73,25 @@ func GetParkingLotByID(id int) (*models.ParkingSpot, error) {
 		return nil, fmt.Errorf("failed to get parking lot by ID %d: %w", id, err)
 	}
 
-	log.Printf("Successfully retrieved parking lot with ID %d", id)
-	return &spot, nil
+	// 計算剩餘位子數量
+	var availableCount int64
+	if err := database.DB.Model(&models.ParkingSpot{}).
+		Where("parking_lot_id = ? AND status = ?", lot.ParkingLotID, "available").
+		Count(&availableCount).Error; err != nil {
+		log.Printf("Failed to count available spots for lot ID %d: %v", lot.ParkingLotID, err)
+		lot.RemainingSpots = 0
+	} else {
+		lot.RemainingSpots = max(0, int(availableCount)) // 確保不負
+	}
+
+	log.Printf("Successfully retrieved parking lot with ID %d, remaining spots: %d", id, lot.RemainingSpots)
+	return &lot, nil
+}
+
+// 輔助函數，確保剩餘數不為負
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

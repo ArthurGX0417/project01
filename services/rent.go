@@ -31,7 +31,7 @@ func CalculateRentCost(startTime time.Time, endTime time.Time, parkingLot models
 }
 
 // EnterParkingSpot 進場記錄車牌和進場時間
-func EnterParkingSpot(licensePlate string, startTime time.Time) error {
+func EnterParkingSpot(licensePlate string, parkingLotID int, startTime time.Time) error {
 	var member models.Member
 	if err := database.DB.Where("license_plate = ?", licensePlate).First(&member).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -41,13 +41,23 @@ func EnterParkingSpot(licensePlate string, startTime time.Time) error {
 		return fmt.Errorf("failed to verify member: %w", err)
 	}
 
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			log.Printf("Panic occurred during enter parking spot: license_plate=%s, error=%v", licensePlate, r)
+		}
+	}()
+
 	var parkingSpots []models.ParkingSpot
-	if err := database.DB.Where("status = ?", "available").Find(&parkingSpots).Error; err != nil {
+	if err := tx.Where("parking_lot_id = ? AND status = ?", parkingLotID, "available").Find(&parkingSpots).Error; err != nil {
+		tx.Rollback()
 		log.Printf("Failed to query available parking spots: error=%v", err)
 		return fmt.Errorf("failed to query available parking spots: %w", err)
 	}
 	if len(parkingSpots) == 0 {
-		return fmt.Errorf("no available parking spots")
+		tx.Rollback()
+		return fmt.Errorf("no available parking spots in lot %d", parkingLotID)
 	}
 
 	spot := parkingSpots[0]
@@ -61,14 +71,21 @@ func EnterParkingSpot(licensePlate string, startTime time.Time) error {
 		Status:       "pending",
 	}
 
-	if err := database.DB.Create(rent).Error; err != nil {
+	if err := tx.Create(rent).Error; err != nil {
+		tx.Rollback()
 		log.Printf("Failed to create rent record: license_plate=%s, error=%v", licensePlate, err)
 		return fmt.Errorf("failed to create rent record: %w", err)
 	}
 
-	if err := database.DB.Save(&spot).Error; err != nil {
+	if err := tx.Save(&spot).Error; err != nil {
+		tx.Rollback()
 		log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", spot.SpotID, err)
 		return fmt.Errorf("failed to update parking spot status: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		log.Printf("Failed to commit transaction: license_plate=%s, error=%v", licensePlate, err)
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	log.Printf("Successfully entered parking spot: license_plate=%s, rent_id=%d, spot_id=%d", licensePlate, rent.RentID, spot.SpotID)

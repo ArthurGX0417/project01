@@ -113,9 +113,31 @@ func GenerateParkingNotification(c *gin.Context) {
 		return
 	}
 
-	// 假設需要從服務層實現通知邏輯（目前未定義）
-	// 這裡暫時返回一個模擬回應，需在 services/rent.go 中添加對應函數
-	notification := fmt.Sprintf("Parking notification for rent ID %d", input.RentID)
+	// 驗證 rent_id 屬於當前用戶
+	rent, err := services.GetRentByID(input.RentID)
+	if err != nil {
+		log.Printf("Failed to get rent by ID %d: %v", input.RentID, err)
+		ErrorResponse(c, http.StatusInternalServerError, "通知生成失敗", err.Error())
+		return
+	}
+	if rent == nil {
+		ErrorResponse(c, http.StatusNotFound, "租賃記錄不存在", "rent not found")
+		return
+	}
+
+	licensePlate := c.GetString("license_plate")
+	if licensePlate != rent.LicensePlate {
+		ErrorResponse(c, http.StatusForbidden, "無權限", "unauthorized access to rent record")
+		return
+	}
+
+	notification, err := services.GenerateParkingNotification(input.RentID)
+	if err != nil {
+		log.Printf("Failed to generate notification for rent_id %d: %v", input.RentID, err)
+		ErrorResponse(c, http.StatusInternalServerError, "通知生成失敗", err.Error())
+		return
+	}
+
 	SuccessResponse(c, http.StatusOK, "通知生成成功", gin.H{"notification": notification})
 }
 
@@ -215,7 +237,7 @@ func GetTotalCostByLicensePlate(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "查詢成功", gin.H{"total_cost": totalCost})
 }
 
-// CheckParkingAvailability 檢查停車場可用性
+// CheckParkingAvailability 查詢特定停車場總可用位子
 func CheckParkingAvailability(c *gin.Context) {
 	parkingLotIDStr := c.Param("id") // 從路徑取 :id
 	parkingLotID := 0

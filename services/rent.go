@@ -232,15 +232,29 @@ func CheckParkingAvailability(parkingLotID int) (int64, error) {
 }
 
 // GenerateParkingNotification 生成停車通知
-func GenerateParkingNotification(rentID int) (string, error) {
+func GenerateParkingNotification(rentID int) (map[string]interface{}, error) {
 	var rent models.Rent
-	if err := database.DB.First(&rent, rentID).Error; err != nil {
+	if err := database.DB.Preload("ParkingSpot.ParkingLot").First(&rent, rentID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", fmt.Errorf("rent with ID %d not found", rentID)
+			return nil, fmt.Errorf("rent with ID %d not found", rentID)
 		}
-		return "", fmt.Errorf("failed to get rent: %w", err)
+		return nil, fmt.Errorf("failed to get rent: %w", err)
 	}
-	notification := fmt.Sprintf("Parking notification: Rent ID %d, License Plate %s, Start Time %s", rent.RentID, rent.LicensePlate, rent.StartTime.Format("2006-01-02 15:04:05"))
+
+	notification := map[string]interface{}{
+		"rent_id":       rent.RentID,
+		"license_plate": rent.LicensePlate,
+		"start_time":    rent.StartTime.Format("2006-01-02T15:04:05+08:00"),
+	}
+	if rent.EndTime != nil {
+		notification["end_time"] = rent.EndTime.Format("2006-01-02T15:04:05+08:00")
+		notification["total_cost"] = rent.TotalCost
+	} else {
+		notification["end_time"] = "N/A"
+		notification["total_cost"] = 0.0
+	}
+
+	log.Printf("Generated notification for rent_id %d: %+v", rentID, notification)
 	return notification, nil
 }
 

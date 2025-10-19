@@ -217,7 +217,18 @@ func GetTotalCostByLicensePlate(c *gin.Context) {
 
 // CheckParkingAvailability 檢查停車場可用性
 func CheckParkingAvailability(c *gin.Context) {
-	availableSpots, err := services.CheckParkingAvailability()
+	parkingLotIDStr := c.Param("id") // 從路徑取 :id
+	parkingLotID := 0
+	if parkingLotIDStr != "" {
+		var err error
+		parkingLotID, err = strconv.Atoi(parkingLotIDStr)
+		if err != nil || parkingLotID <= 0 {
+			ErrorResponse(c, http.StatusBadRequest, "無效的停車場ID", err.Error())
+			return
+		}
+	}
+
+	availableSpots, err := services.CheckParkingAvailability(parkingLotID)
 	if err != nil {
 		log.Printf("Failed to check parking availability: error=%v", err)
 		ErrorResponse(c, http.StatusInternalServerError, "查詢失敗", err.Error())

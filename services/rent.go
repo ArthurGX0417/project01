@@ -197,20 +197,37 @@ func GetTotalCostByLicensePlate(licensePlate string) (float64, error) {
 	return totalCost, nil
 }
 
-// CheckParkingAvailability 檢查停車場可用性
-func CheckParkingAvailability() (int64, error) {
+// CheckParkingAvailability 查詢特定停車場可用位子
+func CheckParkingAvailability(parkingLotID int) (int64, error) {
 	var totalSpots, occupiedSpots int64
-	if err := database.DB.Model(&models.ParkingLot{}).Count(&totalSpots).Error; err != nil {
-		log.Printf("Failed to count total parking spots: error=%v", err)
-		return 0, fmt.Errorf("failed to count total parking spots: %w", err)
-	}
-	if err := database.DB.Model(&models.ParkingSpot{}).Where("status = ?", "occupied").Count(&occupiedSpots).Error; err != nil {
-		log.Printf("Failed to count occupied parking spots: error=%v", err)
-		return 0, fmt.Errorf("failed to count occupied parking spots: %w", err)
+
+	if parkingLotID > 0 {
+		// 指定場：count該lot spots
+		if err := database.DB.Model(&models.ParkingLot{}).Where("parking_lot_id = ?", parkingLotID).Select("total_spots").Scan(&totalSpots).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return 0, fmt.Errorf("parking lot %d not found", parkingLotID)
+			}
+			log.Printf("Failed to get total spots for lot %d: %v", parkingLotID, err)
+			return 0, fmt.Errorf("failed to get total spots: %w", err)
+		}
+		if err := database.DB.Model(&models.ParkingSpot{}).Where("parking_lot_id = ? AND status = ?", parkingLotID, "occupied").Count(&occupiedSpots).Error; err != nil {
+			log.Printf("Failed to count occupied parking spots for lot %d: %v", parkingLotID, err)
+			return 0, fmt.Errorf("failed to count occupied parking spots: %w", err)
+		}
+	} else {
+		// 全域：sum all lots total_spots
+		if err := database.DB.Model(&models.ParkingLot{}).Select("SUM(total_spots)").Scan(&totalSpots).Error; err != nil {
+			log.Printf("Failed to sum total parking spots: %v", err)
+			return 0, fmt.Errorf("failed to sum total parking spots: %w", err)
+		}
+		if err := database.DB.Model(&models.ParkingSpot{}).Where("status = ?", "occupied").Count(&occupiedSpots).Error; err != nil {
+			log.Printf("Failed to count occupied parking spots: %v", err)
+			return 0, fmt.Errorf("failed to count occupied parking spots: %w", err)
+		}
 	}
 
 	availableSpots := totalSpots - occupiedSpots
-	log.Printf("Total spots: %d, Occupied spots: %d, Available spots: %d", totalSpots, occupiedSpots, availableSpots)
+	log.Printf("Available spots: %d (parking_lot_id=%d)", availableSpots, parkingLotID)
 	return availableSpots, nil
 }
 

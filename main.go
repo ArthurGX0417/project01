@@ -90,7 +90,7 @@ func ensureAdminExists() {
 	}
 
 	// 哈希密碼
-	hashedPassword, err := utils.HashPassword("adminjojo") // 假設預設密碼
+	hashedPassword, err := utils.HashPassword("adminj0j0") // 假設預設密碼
 	if err != nil {
 		log.Fatalf("Failed to hash admin password: %v", err)
 	}
@@ -99,7 +99,7 @@ func ensureAdminExists() {
 		log.Fatalf("Failed to encrypt payment info for admin: %v", err)
 	}
 	admin = models.Member{
-		Email:        "adminjojo@gmail.com",
+		Email:        "adminj0j0@gmail.com",
 		Phone:        "0936687137",
 		Password:     hashedPassword,
 		LicensePlate: "JOJ-0936", // 假設管理員車牌

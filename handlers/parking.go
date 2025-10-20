@@ -7,6 +7,7 @@ import (
 	"project01/models"
 	"project01/services"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -143,4 +144,77 @@ func GetParkingLot(c *gin.Context) {
 		"message": "查詢成功",
 		"data":    lot.ToResponse(),
 	})
+}
+
+// CreateParkingLot 新增停車場 (admin only)
+func CreateParkingLot(c *gin.Context) {
+	var lot models.ParkingLot
+	if err := c.ShouldBindJSON(&lot); err != nil {
+		log.Printf("Invalid input data: %v", err)
+		ErrorResponse(c, http.StatusBadRequest, "無效的輸入資料", err.Error())
+		return
+	}
+
+	if err := services.CreateParkingLot(&lot); err != nil {
+		log.Printf("Failed to create parking lot: %v", err)
+		ErrorResponse(c, http.StatusInternalServerError, "新增停車場失敗", err.Error())
+		return
+	}
+
+	SuccessResponse(c, http.StatusOK, "新增成功", lot.ToResponse())
+}
+
+// UpdateParkingLot 更新停車場資訊 (admin only)
+func UpdateParkingLot(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		log.Printf("Invalid parking lot ID: %v", err)
+		ErrorResponse(c, http.StatusBadRequest, "無效的停車場ID", err.Error())
+		return
+	}
+
+	var updatedFields map[string]interface{}
+	if err := c.ShouldBindJSON(&updatedFields); err != nil {
+		log.Printf("Invalid input data: %v", err)
+		ErrorResponse(c, http.StatusBadRequest, "無效的輸入資料", err.Error())
+		return
+	}
+
+	if len(updatedFields) == 0 {
+		ErrorResponse(c, http.StatusBadRequest, "未提供任何更新字段", "no fields provided for update")
+		return
+	}
+
+	updatedLot, err := services.UpdateParkingLot(id, updatedFields)
+	if err != nil {
+		log.Printf("Failed to update parking lot with ID %d: %v", id, err)
+		ErrorResponse(c, http.StatusInternalServerError, "更新停車場失敗", err.Error())
+		return
+	}
+
+	SuccessResponse(c, http.StatusOK, "更新成功", updatedLot.ToResponse())
+}
+
+// DeleteParkingLot 刪除停車場 (admin only)
+func DeleteParkingLot(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		log.Printf("Invalid parking lot ID: %v", err)
+		ErrorResponse(c, http.StatusBadRequest, "無效的停車場ID", err.Error())
+		return
+	}
+
+	if err := services.DeleteParkingLot(id); err != nil {
+		log.Printf("Failed to delete parking lot with ID %d: %v", id, err)
+		if strings.Contains(err.Error(), "not found") {
+			ErrorResponse(c, http.StatusNotFound, "停車場不存在", err.Error())
+		} else {
+			ErrorResponse(c, http.StatusInternalServerError, "刪除停車場失敗", err.Error())
+		}
+		return
+	}
+
+	SuccessResponse(c, http.StatusOK, "刪除成功", nil)
 }

@@ -359,8 +359,8 @@ func Path(router *gin.RouterGroup) {
 			parkingWithAuth.Use(AuthMiddleware())
 			{
 				parkingWithAuth.POST("", RoleMiddleware("admin"), handlers.CreateParkingLot)                           // 新增停車場
-				parkingWithAuth.GET("/available", RoleMiddleware("renter", "admin"), handlers.GetAvailableParkingLots) //查詢可用停車場
-				parkingWithAuth.GET("/:id", RoleMiddleware("renter", "admin"), handlers.GetParkingLot)                 //查詢特定停車場詳情 (剩餘位子、經緯度)
+				parkingWithAuth.GET("/available", RoleMiddleware("renter", "admin"), handlers.GetAvailableParkingLots) // 查詢可用停車場
+				parkingWithAuth.GET("/:id", RoleMiddleware("renter", "admin"), handlers.GetParkingLot)                 // 查詢特定停車場詳情 (剩餘位子、經緯度)
 				parkingWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateParkingLot)                        // 更新停車場
 				parkingWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteParkingLot)                     // 刪除停車場
 			}

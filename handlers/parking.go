@@ -138,7 +138,6 @@ func GetParkingLot(c *gin.Context) {
 		return
 	}
 
-	// 回應成功
 	c.JSON(http.StatusOK, gin.H{
 		"status":  true,
 		"message": "查詢成功",

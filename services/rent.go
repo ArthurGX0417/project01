@@ -115,12 +115,20 @@ func LeaveParkingSpot(licensePlate string, endTime time.Time) error {
 		return fmt.Errorf("failed to query rent: %w", err)
 	}
 
-	if err := tx.Preload("ParkingSpot").First(&rent).Error; err != nil {
+	// 修正：使用 Preload("ParkingSpot.ParkingLot")
+	if err := tx.Preload("ParkingSpot.ParkingLot").First(&rent).Error; err != nil {
 		tx.Rollback()
-		log.Printf("Failed to preload parking spot: rent_id=%d, error=%v", rent.RentID, err)
-		return fmt.Errorf("failed to preload parking spot: %w", err)
+		log.Printf("Failed to preload parking spot and lot: rent_id=%d, error=%v", rent.RentID, err)
+		return fmt.Errorf("failed to preload parking spot and lot: %w", err)
 	}
 	spot = rent.ParkingSpot
+
+	// 檢查 ParkingLot 是否正確載入
+	if spot.ParkingLot.ParkingLotID == 0 {
+		tx.Rollback()
+		log.Printf("Parking lot not found for spot_id=%d, rent_id=%d", spot.SpotID, rent.RentID)
+		return fmt.Errorf("parking lot not found for spot_id=%d", spot.SpotID)
+	}
 
 	totalCost, err := CalculateRentCost(rent.StartTime, endTime, spot.ParkingLot)
 	if err != nil {
@@ -129,7 +137,7 @@ func LeaveParkingSpot(licensePlate string, endTime time.Time) error {
 		return fmt.Errorf("failed to calculate rent cost: %w", err)
 	}
 	rent.TotalCost = totalCost
-	rent.EndTime = &endTime // 將 time.Time 轉為 *time.Time
+	rent.EndTime = &endTime
 	rent.Status = "completed"
 
 	if err := tx.Save(&rent).Error; err != nil {

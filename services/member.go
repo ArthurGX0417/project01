@@ -30,6 +30,15 @@ func RegisterMember(member *models.Member) error {
 		return fmt.Errorf("failed to check for duplicate phone: %w", err)
 	}
 
+	if member.LicensePlate != "" {
+		if err := database.DB.Where("license_plate = ?", member.LicensePlate).First(&existingMember).Error; err == nil {
+			return fmt.Errorf("license_plate %s is already in use", member.LicensePlate)
+		} else if err != gorm.ErrRecordNotFound {
+			log.Printf("Failed to check for duplicate license_plate: %v", err)
+			return fmt.Errorf("failed to check for duplicate license_plate: %w", err)
+		}
+	}
+
 	// 驗證密碼（至少 8 個字元，包含字母和數字）
 	if len(member.Password) < 8 ||
 		!regexp.MustCompile(`[a-zA-Z]`).MatchString(member.Password) ||
@@ -40,6 +49,11 @@ func RegisterMember(member *models.Member) error {
 	// 驗證 role
 	if member.Role != "renter" && member.Role != "admin" {
 		return fmt.Errorf("invalid role: must be 'renter' or 'admin'")
+	}
+
+	// 驗證 name（可選，長度限制）
+	if member.Name != "" && len(member.Name) > 50 {
+		return fmt.Errorf("name length cannot exceed 50 characters")
 	}
 
 	// 哈希密碼
@@ -66,7 +80,7 @@ func RegisterMember(member *models.Member) error {
 		return fmt.Errorf("failed to register member: %w", err)
 	}
 
-	log.Printf("Successfully registered member with ID %d", member.MemberID)
+	log.Printf("Successfully registered member with ID %d, name=%s", member.MemberID, member.Name)
 	return nil
 }
 
@@ -250,7 +264,19 @@ func UpdateMember(id int, updatedFields map[string]interface{}) error {
 			}
 			mappedFields["payment_info"] = encryptedPaymentInfo
 		case "license_plate":
-			mappedFields["license_plate"] = value
+			licensePlateStr, ok := value.(string)
+			if !ok {
+				return fmt.Errorf("invalid license_plate type: must be a string")
+			}
+			// 檢查是否有重複的 license_plate
+			var existingMember models.Member
+			if err := database.DB.Where("license_plate = ? AND member_id != ?", licensePlateStr, id).First(&existingMember).Error; err == nil {
+				return fmt.Errorf("license_plate %s is already in use", licensePlateStr)
+			} else if err != gorm.ErrRecordNotFound {
+				log.Printf("Failed to check for duplicate license_plate: %v", err)
+				return fmt.Errorf("failed to check for duplicate license_plate: %w", err)
+			}
+			mappedFields["license_plate"] = licensePlateStr
 		case "email":
 			emailStr, ok := value.(string)
 			if !ok {
@@ -265,6 +291,15 @@ func UpdateMember(id int, updatedFields map[string]interface{}) error {
 				return fmt.Errorf("failed to check for duplicate email: %w", err)
 			}
 			mappedFields["email"] = emailStr
+		case "name":
+			nameStr, ok := value.(string)
+			if !ok {
+				return fmt.Errorf("invalid name type: must be a string")
+			}
+			if len(nameStr) > 50 {
+				return fmt.Errorf("name length cannot exceed 50 characters")
+			}
+			mappedFields["name"] = nameStr
 		default:
 			return fmt.Errorf("invalid field: %s", key)
 		}
@@ -276,7 +311,7 @@ func UpdateMember(id int, updatedFields map[string]interface{}) error {
 		return fmt.Errorf("failed to update member with ID %d: %w", id, err)
 	}
 
-	log.Printf("Successfully updated member with ID %d", id)
+	log.Printf("Successfully updated member with ID %d, fields: %v", id, mappedFields)
 	return nil
 }
 

@@ -23,7 +23,7 @@ var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]
 // 電話驗證字串 (例如：10 位數)
 var phoneRegex = regexp.MustCompile(`^[0-9]{10}$`)
 
-// 註冊會員資料檢查
+// RegisterMember 處理會員註冊
 func RegisterMember(c *gin.Context) {
 	var member models.Member
 	if err := c.ShouldBindJSON(&member); err != nil {
@@ -50,6 +50,7 @@ func RegisterMember(c *gin.Context) {
 		return
 	}
 
+	// 驗證 payment_info
 	if member.PaymentInfo == "" {
 		ErrorResponse(c, http.StatusBadRequest, "請提供 payment_info", "payment_info is required")
 		return
@@ -64,6 +65,12 @@ func RegisterMember(c *gin.Context) {
 		return
 	}
 
+	// 驗證 name（可選，長度限制）
+	if member.Name != "" && len(member.Name) > 50 {
+		ErrorResponse(c, http.StatusBadRequest, "姓名長度不能超過50個字符", "name too long")
+		return
+	}
+
 	// 檢查現有的電子郵件或電話
 	var existingMember models.Member
 	if err := database.DB.Where("email = ?", member.Email).First(&existingMember).Error; err == nil {
@@ -74,6 +81,15 @@ func RegisterMember(c *gin.Context) {
 		ErrorResponse(c, http.StatusBadRequest, "該電話號碼已被註冊", "phone already in use")
 		return
 	}
+	if member.LicensePlate != "" {
+		if err := database.DB.Where("license_plate = ?", member.LicensePlate).First(&existingMember).Error; err == nil {
+			ErrorResponse(c, http.StatusBadRequest, "該車牌已被註冊", "license_plate already in use")
+			return
+		}
+	}
+
+	// 記錄接收到的 name 值
+	log.Printf("Registering member with email=%s, phone=%s, name=%s", member.Email, member.Phone, member.Name)
 
 	if err := services.RegisterMember(&member); err != nil {
 		log.Printf("Failed to register member with email %s and phone %s: %v", member.Email, member.Phone, err)
@@ -195,6 +211,7 @@ func GetAllMembers(c *gin.Context) {
 }
 
 // 根據ID更新會員資料檢查
+// UpdateMember 更新會員資料
 func UpdateMember(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -215,6 +232,9 @@ func UpdateMember(c *gin.Context) {
 		ErrorResponse(c, http.StatusBadRequest, "未提供任何更新字段", "no fields provided for update")
 		return
 	}
+
+	// 記錄接收到的更新字段
+	log.Printf("Updating member ID %d with fields: %v", id, updatedFields)
 
 	if err := services.UpdateMember(id, updatedFields); err != nil {
 		log.Printf("Failed to update member with ID %d and fields %v: %v", id, updatedFields, err)

@@ -9,6 +9,7 @@ type Member struct {
 	LicensePlate string `json:"license_plate" gorm:"type:varchar(20);unique" binding:"omitempty,max=20"`
 	PaymentInfo  string `json:"payment_info" gorm:"type:varchar(100)" binding:"omitempty,max=100"`
 	Role         string `json:"role" gorm:"type:enum('renter', 'admin');default:'renter'" binding:"omitempty,oneof=renter admin"`
+	Name         string `json:"name" gorm:"type:varchar(50)" binding:"omitempty,max=50"` // 新增 name 欄位
 }
 
 func (Member) TableName() string {
@@ -23,6 +24,7 @@ type MemberResponse struct {
 	LicensePlate string `json:"license_plate"`
 	PaymentInfo  string `json:"payment_info"`
 	Role         string `json:"role"`
+	Name         string `json:"name"` // 新增 name 欄位
 }
 
 func (m *Member) ToResponse() MemberResponse {
@@ -33,5 +35,6 @@ func (m *Member) ToResponse() MemberResponse {
 		LicensePlate: m.LicensePlate,
 		PaymentInfo:  m.PaymentInfo,
 		Role:         m.Role,
+		Name:         m.Name, // 新增
 	}
 }

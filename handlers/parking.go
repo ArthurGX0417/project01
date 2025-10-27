@@ -217,3 +217,20 @@ func DeleteParkingLot(c *gin.Context) {
 
 	SuccessResponse(c, http.StatusOK, "刪除成功", nil)
 }
+
+// GetAllParkingLots 查詢所有停車場（限 admin）
+func GetAllParkingLots(c *gin.Context) {
+	parkingLots, err := services.GetAllParkingLots()
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "查詢所有停車場失敗", err.Error())
+		return
+	}
+
+	parkingLotResponses := make([]models.ParkingLotResponse, len(parkingLots))
+	for i, parkingLot := range parkingLots {
+		parkingLotResponses[i] = parkingLot.ToResponse()
+	}
+
+	SuccessResponse(c, http.StatusOK, "查詢成功", parkingLotResponses)
+	log.Printf("Successfully retrieved %d parking lots for admin", len(parkingLots))
+}

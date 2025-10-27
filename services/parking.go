@@ -227,3 +227,23 @@ func DeleteParkingLot(id int) error {
 	log.Printf("Successfully deleted parking lot with ID %d", id)
 	return nil
 }
+
+// GetAllParkingLots 查詢所有停車場（限 admin）
+func GetAllParkingLots() ([]models.ParkingLot, error) {
+	var parkingLots []models.ParkingLot
+	if err := database.DB.Preload("ParkingSpots").Find(&parkingLots).Error; err != nil {
+		log.Printf("Failed to query all parking lots: %v", err)
+		return nil, fmt.Errorf("failed to query all parking lots: %w", err)
+	}
+
+	for i := range parkingLots {
+		var occupiedSpots int64
+		database.DB.Model(&models.Rent{}).
+			Where("parking_lot_id = ? AND end_time IS NULL", parkingLots[i].ParkingLotID).
+			Count(&occupiedSpots)
+		parkingLots[i].RemainingSpots = parkingLots[i].TotalSpots - int(occupiedSpots)
+	}
+
+	log.Printf("Successfully retrieved %d parking lots", len(parkingLots))
+	return parkingLots, nil
+}

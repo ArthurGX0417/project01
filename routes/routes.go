@@ -361,6 +361,7 @@ func Path(router *gin.RouterGroup) {
 				parkingWithAuth.POST("", RoleMiddleware("admin"), handlers.CreateParkingLot)                           // 新增停車場
 				parkingWithAuth.GET("/available", RoleMiddleware("renter", "admin"), handlers.GetAvailableParkingLots) // 查詢可用停車場
 				parkingWithAuth.GET("/:id", RoleMiddleware("renter", "admin"), handlers.GetParkingLot)                 // 查詢特定停車場詳情 (剩餘位子、經緯度)
+				parkingWithAuth.GET("/all", RoleMiddleware("admin"), handlers.GetAllParkingLots)                       // 查詢所有停車場
 				parkingWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateParkingLot)                        // 更新停車場
 				parkingWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteParkingLot)                     // 刪除停車場
 			}
@@ -379,6 +380,7 @@ func Path(router *gin.RouterGroup) {
 				rentWithAuth.GET("", RoleMiddleware("renter"), handlers.GetRentRecordsByLicensePlate)                       //查詢租用紀錄
 				rentWithAuth.GET("/:id", RoleMiddleware("renter"), handlers.GetRentByID)                                    //查詢特定租賃記錄
 				rentWithAuth.GET("/total-cost", RoleMiddleware("renter"), handlers.GetTotalCostByLicensePlate)              //查詢總費用
+				rentWithAuth.GET("/availability", RoleMiddleware("renter", "admin"), handlers.CheckParkingAvailability)     //查詢全部停車場可用位子
 				rentWithAuth.GET("/availability/:id", RoleMiddleware("renter", "admin"), handlers.CheckParkingAvailability) //查詢特定停車場可用位子
 			}
 		}

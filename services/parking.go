@@ -146,17 +146,38 @@ func UpdateParkingLot(id int, updatedFields map[string]interface{}) (*models.Par
 			}
 			mappedFields["address"] = addressStr
 		case "hourly_rate":
-			rate, ok := value.(float64)
-			if !ok || rate < 0 {
+			var rate float64
+			switch v := value.(type) {
+			case float64:
+				rate = v
+			case int:
+				rate = float64(v)
+			default:
+				return nil, fmt.Errorf("invalid hourly_rate type: must be number")
+			}
+			if rate < 0 {
 				return nil, fmt.Errorf("invalid hourly_rate: must be >= 0")
 			}
 			mappedFields["hourly_rate"] = rate
 		case "total_spots":
-			spots, ok := value.(int)
-			if !ok || spots < 0 {
+			var spots int
+			switch v := value.(type) {
+			case float64:
+				if v != float64(int(v)) {
+					return nil, fmt.Errorf("invalid total_spots: must be an integer")
+				}
+				spots = int(v)
+			case int:
+				spots = v
+			case int64:
+				spots = int(v)
+			default:
+				return nil, fmt.Errorf("invalid total_spots type: expected number, got %T", value)
+			}
+
+			if spots < 0 {
 				return nil, fmt.Errorf("invalid total_spots: must be >= 0")
 			}
-			// 若更新 total_spots，需調整 spots (這裡簡化，不自動調整)
 			mappedFields["total_spots"] = spots
 		case "longitude":
 			lon, ok := value.(float64)

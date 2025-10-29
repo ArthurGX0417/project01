@@ -41,3 +41,13 @@ func (p *ParkingLot) ToResponse() ParkingLotResponse {
 		RemainingSpots: p.RemainingSpots, // 新增
 	}
 }
+
+// UpdateParkingLotRequest 用於 PUT 更新
+type UpdateParkingLotRequest struct {
+	Type       *string  `json:"type" binding:"omitempty,oneof=flat mechanical"`
+	Address    *string  `json:"address" binding:"omitempty,max=100"`
+	HourlyRate *float64 `json:"hourly_rate" binding:"omitempty,gte=0"`
+	TotalSpots *int     `json:"total_spots" binding:"omitempty,gte=0"`
+	Longitude  *float64 `json:"longitude" binding:"omitempty,gte=-180,lte=180"`
+	Latitude   *float64 `json:"latitude" binding:"omitempty,gte=-90,lte=90"`
+}

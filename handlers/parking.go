@@ -165,34 +165,46 @@ func CreateParkingLot(c *gin.Context) {
 
 // UpdateParkingLot 更新停車場資訊 (admin only)
 func UpdateParkingLot(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		log.Printf("Invalid parking lot ID: %v", err)
-		ErrorResponse(c, http.StatusBadRequest, "無效的停車場ID", err.Error())
-		return
-	}
+	id, _ := strconv.Atoi(c.Param("id"))
 
-	var updatedFields map[string]interface{}
-	if err := c.ShouldBindJSON(&updatedFields); err != nil {
-		log.Printf("Invalid input data: %v", err)
+	var req models.UpdateParkingLotRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		ErrorResponse(c, http.StatusBadRequest, "無效的輸入資料", err.Error())
 		return
 	}
 
-	if len(updatedFields) == 0 {
-		ErrorResponse(c, http.StatusBadRequest, "未提供任何更新字段", "no fields provided for update")
+	updates := make(map[string]interface{})
+	if req.Type != nil {
+		updates["type"] = *req.Type
+	}
+	if req.Address != nil {
+		updates["address"] = *req.Address
+	}
+	if req.HourlyRate != nil {
+		updates["hourly_rate"] = *req.HourlyRate
+	}
+	if req.TotalSpots != nil {
+		updates["total_spots"] = *req.TotalSpots
+	}
+	if req.Longitude != nil {
+		updates["longitude"] = *req.Longitude
+	}
+	if req.Latitude != nil {
+		updates["latitude"] = *req.Latitude
+	}
+
+	if len(updates) == 0 {
+		ErrorResponse(c, http.StatusBadRequest, "未提供任何更新字段", "")
 		return
 	}
 
-	updatedLot, err := services.UpdateParkingLot(id, updatedFields)
+	lot, err := services.UpdateParkingLot(id, updates)
 	if err != nil {
-		log.Printf("Failed to update parking lot with ID %d: %v", id, err)
-		ErrorResponse(c, http.StatusInternalServerError, "更新停車場失敗", err.Error())
+		ErrorResponse(c, http.StatusInternalServerError, "更新失敗", err.Error())
 		return
 	}
 
-	SuccessResponse(c, http.StatusOK, "更新成功", updatedLot.ToResponse())
+	SuccessResponse(c, http.StatusOK, "更新成功", lot.ToResponse())
 }
 
 // DeleteParkingLot 刪除停車場 (admin only)

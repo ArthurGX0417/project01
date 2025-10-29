@@ -129,8 +129,11 @@ func UpdateParkingLot(id int, updatedFields map[string]interface{}) (*models.Par
 		return nil, fmt.Errorf("failed to find parking lot with ID %d: %w", id, err)
 	}
 
-	// 驗證並映射字段 (可擴展更多驗證)
+	oldTotalSpots := lot.TotalSpots // 記錄舊值
+
+	// 驗證並映射字段
 	mappedFields := make(map[string]interface{})
+	var newTotalSpots *int // 用來記錄是否有更新 total_spots
 	for key, value := range updatedFields {
 		switch key {
 		case "type":
@@ -164,7 +167,11 @@ func UpdateParkingLot(id int, updatedFields map[string]interface{}) (*models.Par
 			if !ok {
 				return nil, fmt.Errorf("invalid total_spots type: expected int")
 			}
+			if spots < 0 {
+				return nil, fmt.Errorf("invalid total_spots: must be >= 0")
+			}
 			mappedFields["total_spots"] = spots
+			newTotalSpots = &spots // 記錄新值
 		case "longitude":
 			lon, ok := value.(float64)
 			if !ok || lon < -180 || lon > 180 {
@@ -182,8 +189,51 @@ func UpdateParkingLot(id int, updatedFields map[string]interface{}) (*models.Par
 		}
 	}
 
+	// 更新 parking_lot 表
 	if err := database.DB.Model(&lot).Updates(mappedFields).Error; err != nil {
 		return nil, fmt.Errorf("failed to update parking lot with ID %d: %w", id, err)
+	}
+
+	// === 處理 total_spots 變化 ===
+	if newTotalSpots != nil {
+		diff := *newTotalSpots - oldTotalSpots
+		if diff > 0 {
+			// 新增車位
+			for i := 0; i < diff; i++ {
+				spot := models.ParkingSpot{
+					ParkingLotID: id,
+					Status:       "available",
+				}
+				if err := database.DB.Create(&spot).Error; err != nil {
+					log.Printf("Failed to create new spot for lot %d: %v", id, err)
+					// 不回滾主表更新，但記錄錯誤
+				}
+			}
+			log.Printf("Added %d new spots for parking lot %d", diff, id)
+		} else if diff < 0 {
+			// 刪除車位（只能刪 available 的）
+			deleteCount := -diff
+			var spotsToDelete []models.ParkingSpot
+			if err := database.DB.
+				Where("parking_lot_id = ? AND status = ?", id, "available").
+				Limit(deleteCount).
+				Find(&spotsToDelete).Error; err != nil {
+				log.Printf("Failed to query available spots for deletion: %v", err)
+			} else {
+				if len(spotsToDelete) > 0 {
+					var spotIDs []int
+					for _, s := range spotsToDelete {
+						spotIDs = append(spotIDs, s.SpotID)
+					}
+					if err := database.DB.Delete(&models.ParkingSpot{}, spotIDs).Error; err != nil {
+						log.Printf("Failed to delete spots: %v", err)
+					} else {
+						log.Printf("Deleted %d unused spots for parking lot %d", len(spotIDs), id)
+					}
+				}
+			}
+			// 如果 available 不夠刪，僅刪除能刪的，不回滾
+		}
 	}
 
 	log.Printf("Successfully updated parking lot with ID %d", id)

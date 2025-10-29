@@ -47,7 +47,7 @@ type UpdateParkingLotRequest struct {
 	Type       *string  `json:"type" binding:"omitempty,oneof=flat mechanical"`
 	Address    *string  `json:"address" binding:"omitempty,max=100"`
 	HourlyRate *float64 `json:"hourly_rate" binding:"omitempty,gte=0"`
-	TotalSpots *int     `json:"total_spots" binding:"omitempty,gte=0"`
+	TotalSpots *int     `json:"total_spots" binding:"gte=0"` // 移除 omitempty
 	Longitude  *float64 `json:"longitude" binding:"omitempty,gte=-180,lte=180"`
 	Latitude   *float64 `json:"latitude" binding:"omitempty,gte=-90,lte=90"`
 }

@@ -160,23 +160,9 @@ func UpdateParkingLot(id int, updatedFields map[string]interface{}) (*models.Par
 			}
 			mappedFields["hourly_rate"] = rate
 		case "total_spots":
-			var spots int
-			switch v := value.(type) {
-			case float64:
-				if v != float64(int(v)) {
-					return nil, fmt.Errorf("invalid total_spots: must be an integer")
-				}
-				spots = int(v)
-			case int:
-				spots = v
-			case int64:
-				spots = int(v)
-			default:
-				return nil, fmt.Errorf("invalid total_spots type: expected number, got %T", value)
-			}
-
-			if spots < 0 {
-				return nil, fmt.Errorf("invalid total_spots: must be >= 0")
+			spots, ok := value.(int)
+			if !ok {
+				return nil, fmt.Errorf("invalid total_spots type: expected int")
 			}
 			mappedFields["total_spots"] = spots
 		case "longitude":

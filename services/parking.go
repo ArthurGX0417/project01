@@ -119,7 +119,7 @@ func CreateParkingLot(lot *models.ParkingLot) error {
 	return nil
 }
 
-// UpdateParkingLot 更新停車場資訊
+// UpdateParkingLot 更新停車場資訊，並同步實際車位數量
 func UpdateParkingLot(id int, updatedFields map[string]interface{}) (*models.ParkingLot, error) {
 	var lot models.ParkingLot
 	if err := database.DB.First(&lot, id).Error; err != nil {
@@ -129,11 +129,9 @@ func UpdateParkingLot(id int, updatedFields map[string]interface{}) (*models.Par
 		return nil, fmt.Errorf("failed to find parking lot with ID %d: %w", id, err)
 	}
 
-	oldTotalSpots := lot.TotalSpots // 記錄舊值
-
 	// 驗證並映射字段
 	mappedFields := make(map[string]interface{})
-	var newTotalSpots *int // 用來記錄是否有更新 total_spots
+	var newTotalSpots *int
 	for key, value := range updatedFields {
 		switch key {
 		case "type":
@@ -171,7 +169,7 @@ func UpdateParkingLot(id int, updatedFields map[string]interface{}) (*models.Par
 				return nil, fmt.Errorf("invalid total_spots: must be >= 0")
 			}
 			mappedFields["total_spots"] = spots
-			newTotalSpots = &spots // 記錄新值
+			newTotalSpots = &spots
 		case "longitude":
 			lon, ok := value.(float64)
 			if !ok || lon < -180 || lon > 180 {
@@ -194,29 +192,53 @@ func UpdateParkingLot(id int, updatedFields map[string]interface{}) (*models.Par
 		return nil, fmt.Errorf("failed to update parking lot with ID %d: %w", id, err)
 	}
 
-	// === 處理 total_spots 變化 ===
+	// === 處理 total_spots 變化：用「實際車位數」計算 diff ===
 	if newTotalSpots != nil {
-		diff := *newTotalSpots - oldTotalSpots
+		targetSpots := *newTotalSpots
+
+		// 1. 計算當前實際車位數（所有 status）
+		var currentTotal int64
+		if err := database.DB.Model(&models.ParkingSpot{}).
+			Where("parking_lot_id = ?", id).
+			Count(&currentTotal).Error; err != nil {
+			log.Printf("Failed to count current spots for lot %d: %v", id, err)
+			currentTotal = 0
+		}
+
+		// 2. 計算 occupied 數量（不能刪）
+		var occupiedCount int64
+		if err := database.DB.Model(&models.ParkingSpot{}).
+			Where("parking_lot_id = ? AND status = ?", id, "occupied").
+			Count(&occupiedCount).Error; err != nil {
+			log.Printf("Failed to count occupied spots for lot %d: %v", id, err)
+			occupiedCount = 0
+		}
+
+		// 3. 目標不能小於 occupied
+		if targetSpots < int(occupiedCount) {
+			return nil, fmt.Errorf("cannot reduce total_spots to %d: %d spots are occupied", targetSpots, occupiedCount)
+		}
+
+		// 4. 計算 diff
+		diff := targetSpots - int(currentTotal)
 
 		if diff > 0 {
-			// 新增車位（只加到當前停車場）
+			// 需要新增車位
 			for i := 0; i < diff; i++ {
 				spot := models.ParkingSpot{
 					ParkingLotID: id,
 					Status:       "available",
 				}
 				if err := database.DB.Create(&spot).Error; err != nil {
-					log.Printf("Failed to create new spot for lot %d: %v", id, err)
-					// 不回滾，但記錄錯誤
+					log.Printf("Failed to create spot for lot %d: %v", id, err)
 				}
 			}
-			log.Printf("Added %d new spots for parking lot %d", diff, id)
+			log.Printf("Added %d new spots for parking lot %d (total: %d)", diff, id, targetSpots)
 		} else if diff < 0 {
-			// 刪除車位（只刪當前停車場 + available）
+			// 需要刪除車位（只刪 available）
 			deleteCount := -diff
 			var spotsToDelete []models.ParkingSpot
 
-			// 關鍵修正：加上 parking_lot_id !!!
 			if err := database.DB.
 				Where("parking_lot_id = ? AND status = ?", id, "available").
 				Limit(deleteCount).
@@ -230,8 +252,17 @@ func UpdateParkingLot(id int, updatedFields map[string]interface{}) (*models.Par
 				if err := database.DB.Delete(&models.ParkingSpot{}, spotIDs).Error; err != nil {
 					log.Printf("Failed to delete spots: %v", err)
 				} else {
-					log.Printf("Deleted %d unused spots from parking lot %d", len(spotIDs), id)
+					log.Printf("Deleted %d unused spots from parking lot %d (total: %d)", len(spotIDs), id, targetSpots)
 				}
+			}
+
+			// 最終檢查（可選：若刪不夠可回報）
+			var finalCount int64
+			database.DB.Model(&models.ParkingSpot{}).
+				Where("parking_lot_id = ?", id).
+				Count(&finalCount)
+			if int(finalCount) != targetSpots {
+				log.Printf("Warning: expected %d spots, but got %d after update", targetSpots, finalCount)
 			}
 		}
 	}

@@ -197,8 +197,9 @@ func UpdateParkingLot(id int, updatedFields map[string]interface{}) (*models.Par
 	// === 處理 total_spots 變化 ===
 	if newTotalSpots != nil {
 		diff := *newTotalSpots - oldTotalSpots
+
 		if diff > 0 {
-			// 新增車位
+			// 新增車位（只加到當前停車場）
 			for i := 0; i < diff; i++ {
 				spot := models.ParkingSpot{
 					ParkingLotID: id,
@@ -206,33 +207,32 @@ func UpdateParkingLot(id int, updatedFields map[string]interface{}) (*models.Par
 				}
 				if err := database.DB.Create(&spot).Error; err != nil {
 					log.Printf("Failed to create new spot for lot %d: %v", id, err)
-					// 不回滾主表更新，但記錄錯誤
+					// 不回滾，但記錄錯誤
 				}
 			}
 			log.Printf("Added %d new spots for parking lot %d", diff, id)
 		} else if diff < 0 {
-			// 刪除車位（只能刪 available 的）
+			// 刪除車位（只刪當前停車場 + available）
 			deleteCount := -diff
 			var spotsToDelete []models.ParkingSpot
+
+			// 關鍵修正：加上 parking_lot_id !!!
 			if err := database.DB.
 				Where("parking_lot_id = ? AND status = ?", id, "available").
 				Limit(deleteCount).
 				Find(&spotsToDelete).Error; err != nil {
-				log.Printf("Failed to query available spots for deletion: %v", err)
-			} else {
-				if len(spotsToDelete) > 0 {
-					var spotIDs []int
-					for _, s := range spotsToDelete {
-						spotIDs = append(spotIDs, s.SpotID)
-					}
-					if err := database.DB.Delete(&models.ParkingSpot{}, spotIDs).Error; err != nil {
-						log.Printf("Failed to delete spots: %v", err)
-					} else {
-						log.Printf("Deleted %d unused spots for parking lot %d", len(spotIDs), id)
-					}
+				log.Printf("Failed to query available spots for deletion in lot %d: %v", id, err)
+			} else if len(spotsToDelete) > 0 {
+				var spotIDs []int
+				for _, s := range spotsToDelete {
+					spotIDs = append(spotIDs, s.SpotID)
+				}
+				if err := database.DB.Delete(&models.ParkingSpot{}, spotIDs).Error; err != nil {
+					log.Printf("Failed to delete spots: %v", err)
+				} else {
+					log.Printf("Deleted %d unused spots from parking lot %d", len(spotIDs), id)
 				}
 			}
-			// 如果 available 不夠刪，僅刪除能刪的，不回滾
 		}
 	}
 

@@ -4,7 +4,7 @@ package models
 type ParkingSpot struct {
 	SpotID       int        `json:"spot_id" gorm:"primaryKey;autoIncrement;type:INT"`
 	ParkingLotID int        `json:"parking_lot_id" gorm:"index;type:INT" binding:"omitempty"`
-	ParkingLot   ParkingLot `json:"parking_lot" gorm:"foreignKey:ParkingLotID"`
+	ParkingLot   ParkingLot `json:"parking_lot" gorm:"foreignKey:ParkingLotID;references:ParkingLotID"`
 	Status       string     `json:"status" gorm:"type:enum('available', 'occupied');default:'available'" binding:"omitempty,oneof=available occupied"`
 }
 

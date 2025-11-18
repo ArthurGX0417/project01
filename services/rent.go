@@ -95,7 +95,6 @@ func EnterParkingSpot(licensePlate string, parkingLotID int, startTime time.Time
 // LeaveParkingSpot 出場記錄並計算費用
 func LeaveParkingSpot(licensePlate string, endTime time.Time) error {
 	var rent models.Rent
-	var spot models.ParkingSpot
 
 	tx := database.DB.Begin()
 	defer func() {
@@ -105,60 +104,56 @@ func LeaveParkingSpot(licensePlate string, endTime time.Time) error {
 		}
 	}()
 
-	if err := tx.Where("license_plate = ? AND status = ?", licensePlate, "pending").
-		Order("start_time DESC").First(&rent).Error; err != nil {
+	// 關鍵修正在這一行：一次查到 rent + 同時 Preload 關聯！
+	if err := tx.
+		Preload("ParkingSpot.ParkingLot").
+		Where("license_plate = ? AND status = ?", licensePlate, "pending").
+		Order("start_time DESC").
+		First(&rent).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("no pending rent found for license_plate %s", licensePlate)
 		}
-		log.Printf("Failed to query rent: license_plate=%s, error=%v", licensePlate, err)
+		log.Printf("Failed to query rent with preload: license_plate=%s, error=%v", licensePlate, err)
 		return fmt.Errorf("failed to query rent: %w", err)
 	}
 
-	// 修正：使用 Preload("ParkingSpot.ParkingLot")
-	if err := tx.Preload("ParkingSpot.ParkingLot").First(&rent).Error; err != nil {
+	// 現在 rent.ParkingSpot.ParkingLot 一定有資料！
+	if rent.ParkingSpot.ParkingLot.ParkingLotID == 0 {
 		tx.Rollback()
-		log.Printf("Failed to preload parking spot and lot: rent_id=%d, error=%v", rent.RentID, err)
-		return fmt.Errorf("failed to preload parking spot and lot: %w", err)
-	}
-	spot = rent.ParkingSpot
-
-	// 檢查 ParkingLot 是否正確載入
-	if spot.ParkingLot.ParkingLotID == 0 {
-		tx.Rollback()
-		log.Printf("Parking lot not found for spot_id=%d, rent_id=%d", spot.SpotID, rent.RentID)
-		return fmt.Errorf("parking lot not found for spot_id=%d", spot.SpotID)
+		log.Printf("Critical bug: ParkingLotID is 0 for spot_id=%d, rent_id=%d", rent.SpotID, rent.RentID)
+		return fmt.Errorf("parking lot configuration error for spot_id=%d", rent.SpotID)
 	}
 
-	totalCost, err := CalculateRentCost(rent.StartTime, endTime, spot.ParkingLot)
+	// 後面全部不變
+	totalCost, err := CalculateRentCost(rent.StartTime, endTime, rent.ParkingSpot.ParkingLot)
 	if err != nil {
 		tx.Rollback()
-		log.Printf("Failed to calculate rent cost: rent_id=%d, error=%v", rent.RentID, err)
 		return fmt.Errorf("failed to calculate rent cost: %w", err)
 	}
+
 	rent.TotalCost = totalCost
 	rent.EndTime = &endTime
 	rent.Status = "completed"
 
 	if err := tx.Save(&rent).Error; err != nil {
 		tx.Rollback()
-		log.Printf("Failed to update rent: rent_id=%d, error=%v", rent.RentID, err)
 		return fmt.Errorf("failed to update rent: %w", err)
 	}
 
-	spot.Status = "available"
-	if err := tx.Save(&spot).Error; err != nil {
+	// 釋放車位
+	rent.ParkingSpot.Status = "available"
+	if err := tx.Save(&rent.ParkingSpot).Error; err != nil {
 		tx.Rollback()
-		log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", spot.SpotID, err)
 		return fmt.Errorf("failed to update parking spot status: %w", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		log.Printf("Failed to commit transaction: rent_id=%d, error=%v", rent.RentID, err)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("Successfully left parking spot: license_plate=%s, rent_id=%d, total_cost=%.2f", licensePlate, rent.RentID, totalCost)
+	log.Printf("Successfully left parking spot: license_plate=%s, rent_id=%d, total_cost=%.2f",
+		licensePlate, rent.RentID, totalCost)
 	return nil
 }
 

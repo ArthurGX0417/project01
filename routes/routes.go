@@ -375,10 +375,8 @@ func Path(router *gin.RouterGroup) {
 			{
 				rentWithAuth.POST("", RoleMiddleware("renter"), handlers.EnterParkingSpot)                                  //租用車位（車牌掃描輸入）
 				rentWithAuth.POST("/leave", RoleMiddleware("renter"), handlers.LeaveParkingSpot)                            //離開結算（車牌掃描輸入）
-				rentWithAuth.POST("/:id/notify", RoleMiddleware("renter"), handlers.GenerateParkingNotification)            //停車結算通知
 				rentWithAuth.GET("/currently-rented", RoleMiddleware("renter"), handlers.GetCurrentlyRentedSpots)           //查詢當前租用的車位
 				rentWithAuth.GET("", RoleMiddleware("renter"), handlers.GetRentRecordsByLicensePlate)                       //查詢租用紀錄
-				rentWithAuth.GET("/:id", RoleMiddleware("renter"), handlers.GetRentByID)                                    //查詢特定租賃記錄
 				rentWithAuth.GET("/total-cost", RoleMiddleware("renter"), handlers.GetTotalCostByLicensePlate)              //查詢總費用
 				rentWithAuth.GET("/availability", RoleMiddleware("renter", "admin"), handlers.CheckParkingAvailability)     //查詢全部停車場可用位子
 				rentWithAuth.GET("/availability/:id", RoleMiddleware("renter", "admin"), handlers.CheckParkingAvailability) //查詢特定停車場可用位子

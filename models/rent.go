@@ -1,78 +1,54 @@
+// models/rent.go
 package models
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
-// Rent 定義租用模型
 type Rent struct {
-	RentID       int         `json:"rent_id" gorm:"primaryKey;autoIncrement;type:INT"`
-	MemberID     int         `json:"member_id" gorm:"index;type:INT" binding:"omitempty"`
-	SpotID       int         `json:"spot_id" gorm:"index;type:INT" binding:"omitempty"`
-	LicensePlate string      `json:"license_plate" gorm:"type:varchar(20)" binding:"omitempty,max=20"`
-	StartTime    time.Time   `json:"start_time" gorm:"type:datetime;not null" binding:"required"`
-	EndTime      *time.Time  `json:"end_time" gorm:"type:datetime" binding:"omitempty"`
-	TotalCost    float64     `json:"total_cost" gorm:"type:decimal(5,2)" binding:"omitempty,gte=0"`
-	Status       string      `json:"status" gorm:"type:enum('pending', 'completed');default:'pending'" binding:"omitempty,oneof=pending completed"`
-	Member       Member      `json:"member" gorm:"foreignKey:MemberID"`
-	ParkingSpot  ParkingSpot `json:"parking_spot" gorm:"foreignKey:SpotID"`
+	LicensePlate string     `gorm:"primaryKey;size:20;column:license_plate" json:"license_plate"`
+	StartTime    time.Time  `gorm:"primaryKey;column:start_time" json:"start_time"`
+	SpotID       *int       `gorm:"column:spot_id" json:"spot_id,omitempty"`
+	EndTime      *time.Time `gorm:"column:end_time" json:"end_time,omitempty"`
+	TotalCost    *float64   `gorm:"type:decimal(5,2);column:total_cost" json:"total_cost,omitempty"`
+	Status       string     `gorm:"type:enum('pending','completed');default:'pending';column:status" json:"status"`
+
+	// 保留車位關聯（您目前還需要知道停哪格）
+	Spot ParkingSpot `gorm:"foreignKey:SpotID;references:SpotID" json:"parking_spot,omitempty"`
 }
 
 func (Rent) TableName() string {
 	return "rent"
 }
 
-// RentResponse 定義租用回應結構
+// 回應結構（前端要的格式）
 type RentResponse struct {
-	RentID       int       `json:"rent_id"`
-	MemberID     int       `json:"member_id"`
-	SpotID       int       `json:"spot_id"`
-	LicensePlate string    `json:"license_plate"`
-	StartTime    time.Time `json:"start_time"`
-	EndTime      time.Time `json:"end_time"` // 使用 time.Time，處理 nil 情況
-	TotalCost    float64   `json:"total_cost"`
-	Status       string    `json:"status"`
+	LicensePlate string  `json:"license_plate"`
+	StartTime    string  `json:"start_time"`
+	SpotID       *int    `json:"spot_id,omitempty"`
+	EndTime      *string `json:"end_time,omitempty"`
+	TotalCost    *string `json:"total_cost,omitempty"`
+	Status       string  `json:"status"`
 }
 
-type SimpleRentResponse struct {
-	RentID       int       `json:"rent_id"`
-	MemberID     int       `json:"member_id"`
-	SpotID       int       `json:"spot_id"`
-	LicensePlate string    `json:"license_plate"`
-	StartTime    time.Time `json:"start_time"`
-	EndTime      time.Time `json:"end_time"` // 使用 time.Time，處理 nil 情況
-	TotalCost    float64   `json:"total_cost"`
-	Status       string    `json:"status"`
-}
-
+// 轉換方法
 func (r *Rent) ToResponse() RentResponse {
-	endTime := time.Time{} // 預設零時間
+	var endTimeStr, costStr *string
 	if r.EndTime != nil {
-		endTime = *r.EndTime
+		s := r.EndTime.Format(time.RFC3339)
+		endTimeStr = &s
+	}
+	if r.TotalCost != nil {
+		s := fmt.Sprintf("%.2f", *r.TotalCost)
+		costStr = &s
 	}
 	return RentResponse{
-		RentID:       r.RentID,
-		MemberID:     r.MemberID,
-		SpotID:       r.SpotID,
 		LicensePlate: r.LicensePlate,
-		StartTime:    r.StartTime,
-		EndTime:      endTime,
-		TotalCost:    r.TotalCost,
-		Status:       r.Status,
-	}
-}
-
-func (r *Rent) ToSimpleResponse() SimpleRentResponse {
-	endTime := time.Time{} // 預設零時間
-	if r.EndTime != nil {
-		endTime = *r.EndTime
-	}
-	return SimpleRentResponse{
-		RentID:       r.RentID,
-		MemberID:     r.MemberID,
+		StartTime:    r.StartTime.Format(time.RFC3339),
 		SpotID:       r.SpotID,
-		LicensePlate: r.LicensePlate,
-		StartTime:    r.StartTime,
-		EndTime:      endTime,
-		TotalCost:    r.TotalCost,
+		EndTime:      endTimeStr,
+		TotalCost:    costStr,
 		Status:       r.Status,
 	}
 }

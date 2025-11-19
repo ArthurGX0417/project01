@@ -37,7 +37,6 @@ func EnterParkingSpot(licensePlate string, parkingLotID int, startTime time.Time
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("member with license_plate %s not found", licensePlate)
 		}
-		log.Printf("Failed to verify member: license_plate=%s, error=%v", licensePlate, err)
 		return fmt.Errorf("failed to verify member: %w", err)
 	}
 
@@ -45,115 +44,110 @@ func EnterParkingSpot(licensePlate string, parkingLotID int, startTime time.Time
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			log.Printf("Panic occurred during enter parking spot: license_plate=%s, error=%v", licensePlate, r)
+			log.Printf("Panic recovered in LeaveParkingSpot: %v", r)
 		}
 	}()
 
-	var parkingSpots []models.ParkingSpot
-	if err := tx.Where("parking_lot_id = ? AND status = ?", parkingLotID, "available").Find(&parkingSpots).Error; err != nil {
+	var spots []models.ParkingSpot
+	if err := tx.Where("parking_lot_id = ? AND status = ?", parkingLotID, "available").Find(&spots).Error; err != nil {
 		tx.Rollback()
-		log.Printf("Failed to query available parking spots: error=%v", err)
-		return fmt.Errorf("failed to query available parking spots: %w", err)
+		return fmt.Errorf("query available spots failed: %w", err)
 	}
-	if len(parkingSpots) == 0 {
+	if len(spots) == 0 {
 		tx.Rollback()
 		return fmt.Errorf("no available parking spots in lot %d", parkingLotID)
 	}
 
-	spot := parkingSpots[0]
+	spot := spots[0]
 	spot.Status = "occupied"
 
+	// 關鍵：SpotID 是 *int，所以要取址
+	spotIDPtr := &spot.SpotID
+
 	rent := &models.Rent{
-		MemberID:     member.MemberID,
-		SpotID:       spot.SpotID,
 		LicensePlate: licensePlate,
 		StartTime:    startTime,
+		SpotID:       spotIDPtr,
 		Status:       "pending",
 	}
 
 	if err := tx.Create(rent).Error; err != nil {
 		tx.Rollback()
-		log.Printf("Failed to create rent record: license_plate=%s, error=%v", licensePlate, err)
-		return fmt.Errorf("failed to create rent record: %w", err)
+		return fmt.Errorf("create rent failed: %w", err)
 	}
 
 	if err := tx.Save(&spot).Error; err != nil {
 		tx.Rollback()
-		log.Printf("Failed to update parking spot status: spot_id=%d, error=%v", spot.SpotID, err)
-		return fmt.Errorf("failed to update parking spot status: %w", err)
+		return fmt.Errorf("update spot status failed: %w", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		log.Printf("Failed to commit transaction: license_plate=%s, error=%v", licensePlate, err)
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return fmt.Errorf("commit transaction failed: %w", err)
 	}
 
-	log.Printf("Successfully entered parking spot: license_plate=%s, rent_id=%d, spot_id=%d", licensePlate, rent.RentID, spot.SpotID)
+	log.Printf("Successfully entered: license_plate=%s, start_time=%s, spot_id=%d",
+		licensePlate, startTime.Format(time.RFC3339), spot.SpotID)
 	return nil
 }
 
 // LeaveParkingSpot 出場記錄並計算費用
 func LeaveParkingSpot(licensePlate string, endTime time.Time) error {
 	var rent models.Rent
-
 	tx := database.DB.Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			log.Printf("Panic occurred: license_plate=%s, error=%v", licensePlate, r)
 		}
 	}()
 
-	// 關鍵修正在這一行：一次查到 rent + 同時 Preload 關聯！
-	if err := tx.
-		Preload("ParkingSpot.ParkingLot").
+	// 查出 pending 的租借 + 預載車位與停車場
+	if err := tx.Preload("Spot.ParkingLot").
 		Where("license_plate = ? AND status = ?", licensePlate, "pending").
 		Order("start_time DESC").
 		First(&rent).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("no pending rent found for license_plate %s", licensePlate)
+			return fmt.Errorf("no pending rent for %s", licensePlate)
 		}
-		log.Printf("Failed to query rent with preload: license_plate=%s, error=%v", licensePlate, err)
-		return fmt.Errorf("failed to query rent: %w", err)
+		return fmt.Errorf("query rent failed: %w", err)
 	}
 
-	// 現在 rent.ParkingSpot.ParkingLot 一定有資料！
-	if rent.ParkingSpot.ParkingLot.ParkingLotID == 0 {
+	// 檢查停車場是否正確載入
+	if rent.Spot.ParkingLot.ParkingLotID == 0 {
 		tx.Rollback()
-		log.Printf("Critical bug: ParkingLotID is 0 for spot_id=%d, rent_id=%d", rent.SpotID, rent.RentID)
-		return fmt.Errorf("parking lot configuration error for spot_id=%d", rent.SpotID)
+		return fmt.Errorf("parking lot not found for spot_id=%v", rent.SpotID)
 	}
 
-	// 後面全部不變
-	totalCost, err := CalculateRentCost(rent.StartTime, endTime, rent.ParkingSpot.ParkingLot)
+	// 計算費用
+	totalCost, err := CalculateRentCost(rent.StartTime, endTime, rent.Spot.ParkingLot)
 	if err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to calculate rent cost: %w", err)
+		return fmt.Errorf("calculate cost failed: %w", err)
 	}
 
-	rent.TotalCost = totalCost
+	// 更新 rent（TotalCost 是 *float64）
+	rent.TotalCost = &totalCost
 	rent.EndTime = &endTime
 	rent.Status = "completed"
 
 	if err := tx.Save(&rent).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to update rent: %w", err)
+		return fmt.Errorf("save rent failed: %w", err)
 	}
 
 	// 釋放車位
-	rent.ParkingSpot.Status = "available"
-	if err := tx.Save(&rent.ParkingSpot).Error; err != nil {
+	rent.Spot.Status = "available"
+	if err := tx.Save(&rent.Spot).Error; err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to update parking spot status: %w", err)
+		return fmt.Errorf("release spot failed: %w", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return fmt.Errorf("commit failed: %w", err)
 	}
 
-	log.Printf("Successfully left parking spot: license_plate=%s, rent_id=%d, total_cost=%.2f",
-		licensePlate, rent.RentID, totalCost)
+	log.Printf("Successfully left: license_plate=%s, start_time=%s, cost=%.2f",
+		licensePlate, rent.StartTime.Format(time.RFC3339), totalCost)
 	return nil
 }
 
@@ -175,7 +169,7 @@ func GetRentRecordsByLicensePlate(licensePlate string, requestingLicensePlate st
 
 	var rents []models.Rent
 	if err := database.DB.
-		Preload("ParkingSpot.ParkingLot").
+		Preload("Spot.ParkingLot").
 		Where("license_plate = ?", licensePlate).
 		Find(&rents).Error; err != nil {
 		log.Printf("Failed to query rent records for license_plate %s: error=%v", licensePlate, err)
@@ -234,33 +228,6 @@ func CheckParkingAvailability(parkingLotID int) (int64, error) {
 	return availableSpots, nil
 }
 
-// GenerateParkingNotification 生成停車通知
-func GenerateParkingNotification(rentID int) (map[string]interface{}, error) {
-	var rent models.Rent
-	if err := database.DB.Preload("ParkingSpot.ParkingLot").First(&rent, rentID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("rent with ID %d not found", rentID)
-		}
-		return nil, fmt.Errorf("failed to get rent: %w", err)
-	}
-
-	notification := map[string]interface{}{
-		"rent_id":       rent.RentID,
-		"license_plate": rent.LicensePlate,
-		"start_time":    rent.StartTime.Format("2006-01-02T15:04:05+08:00"),
-	}
-	if rent.EndTime != nil {
-		notification["end_time"] = rent.EndTime.Format("2006-01-02T15:04:05+08:00")
-		notification["total_cost"] = rent.TotalCost
-	} else {
-		notification["end_time"] = "N/A"
-		notification["total_cost"] = 0.0
-	}
-
-	log.Printf("Generated notification for rent_id %d: %+v", rentID, notification)
-	return notification, nil
-}
-
 // GetCurrentlyRentedSpots 查詢當前租用的車位
 func GetCurrentlyRentedSpots(licensePlate string) ([]models.Rent, error) {
 	var rents []models.Rent
@@ -270,19 +237,4 @@ func GetCurrentlyRentedSpots(licensePlate string) ([]models.Rent, error) {
 	}
 	log.Printf("Successfully retrieved %d currently rented spots for license_plate %s", len(rents), licensePlate)
 	return rents, nil
-}
-
-// GetRentByID 查詢特定租賃記錄
-func GetRentByID(rentID int) (*models.Rent, error) {
-	var rent models.Rent
-	if err := database.DB.Where("rent_id = ?", rentID).First(&rent).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("Rent with ID %d not found", rentID)
-			return nil, nil
-		}
-		log.Printf("Failed to get rent by ID %d: %v", rentID, err)
-		return nil, fmt.Errorf("failed to get rent by ID %d: %w", rentID, err)
-	}
-	log.Printf("Successfully retrieved rent with ID %d", rentID)
-	return &rent, nil
 }

@@ -104,43 +104,6 @@ func LeaveParkingSpot(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "出場成功", nil)
 }
 
-// GenerateParkingNotification 生成停車通知
-func GenerateParkingNotification(c *gin.Context) {
-	var input NotificationInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		log.Printf("Invalid input data: %v", err)
-		ErrorResponse(c, http.StatusBadRequest, "無效的輸入資料", err.Error())
-		return
-	}
-
-	// 驗證 rent_id 屬於當前用戶
-	rent, err := services.GetRentByID(input.RentID)
-	if err != nil {
-		log.Printf("Failed to get rent by ID %d: %v", input.RentID, err)
-		ErrorResponse(c, http.StatusInternalServerError, "通知生成失敗", err.Error())
-		return
-	}
-	if rent == nil {
-		ErrorResponse(c, http.StatusNotFound, "租賃記錄不存在", "rent not found")
-		return
-	}
-
-	licensePlate := c.GetString("license_plate")
-	if licensePlate != rent.LicensePlate {
-		ErrorResponse(c, http.StatusForbidden, "無權限", "unauthorized access to rent record")
-		return
-	}
-
-	notification, err := services.GenerateParkingNotification(input.RentID)
-	if err != nil {
-		log.Printf("Failed to generate notification for rent_id %d: %v", input.RentID, err)
-		ErrorResponse(c, http.StatusInternalServerError, "通知生成失敗", err.Error())
-		return
-	}
-
-	SuccessResponse(c, http.StatusOK, "通知生成成功", gin.H{"notification": notification})
-}
-
 // GetCurrentlyRentedSpots 查詢當前租用的車位
 func GetCurrentlyRentedSpots(c *gin.Context) {
 	licensePlate := c.GetString("license_plate") // 從 token 中獲取
@@ -187,37 +150,6 @@ func GetRentRecordsByLicensePlate(c *gin.Context) {
 		rentResponses[i] = rent.ToResponse()
 	}
 	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)
-}
-
-// GetRentByID 查詢特定租賃記錄
-func GetRentByID(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		log.Printf("Invalid rent ID: %v", err)
-		ErrorResponse(c, http.StatusBadRequest, "無效的租賃ID", err.Error())
-		return
-	}
-
-	rent, err := services.GetRentByID(id)
-	if err != nil {
-		log.Printf("Failed to get rent by ID %d: %v", id, err)
-		ErrorResponse(c, http.StatusInternalServerError, "查詢失敗", err.Error())
-		return
-	}
-	if rent == nil {
-		ErrorResponse(c, http.StatusNotFound, "租賃記錄不存在", "rent not found")
-		return
-	}
-
-	// 權限檢查：確保當前用戶的 license_plate 與 rent 一致
-	licensePlate := c.GetString("license_plate")
-	if licensePlate != rent.LicensePlate {
-		ErrorResponse(c, http.StatusForbidden, "無權限", "unauthorized access to rent record")
-		return
-	}
-
-	SuccessResponse(c, http.StatusOK, "查詢成功", rent.ToResponse())
 }
 
 // GetTotalCostByLicensePlate 查詢總費用

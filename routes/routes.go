@@ -4,9 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"project01/database"
 	"project01/handlers"
-	"project01/models"
 	"project01/utils"
 	"strconv"
 	"strings"
@@ -190,58 +188,6 @@ func RoleMiddleware(allowedRoles ...string) gin.HandlerFunc {
 	}
 }
 
-// 在routes.go的AuthMiddleware()和RoleMiddleware()後添加
-func LicenseMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		memberID, exists := c.Get("member_id")
-		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"status":  false,
-				"message": "未授權",
-				"error":   "member_id not found in token",
-				"code":    "ERR_NO_MEMBER_ID",
-			})
-			c.Abort()
-			return
-		}
-		memberIDInt, ok := memberID.(int)
-		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"status":  false,
-				"message": "未授權",
-				"error":   "invalid member_id type",
-				"code":    "ERR_INVALID_MEMBER_ID_TYPE",
-			})
-			c.Abort()
-			return
-		}
-
-		var member models.Member
-		if err := database.DB.First(&member, memberIDInt).Error; err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"status":  false,
-				"message": "無法獲取會員資訊",
-				"error":   err.Error(),
-				"code":    "ERR_MEMBER_NOT_FOUND",
-			})
-			c.Abort()
-			return
-		}
-		if member.LicensePlate == "" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status":  false,
-				"message": "會員無車牌資訊",
-				"error":   "license_plate is empty",
-				"code":    "ERR_NO_LICENSE_PLATE",
-			})
-			c.Abort()
-			return
-		}
-		c.Set("license_plate", member.LicensePlate)
-		c.Next()
-	}
-}
-
 // MemberRentHistoryMiddleware 檢查會員是否有權訪問租賃歷史
 func MemberRentHistoryMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -347,12 +293,11 @@ func Path(router *gin.RouterGroup) {
 				membersWithAuth.GET("/:id", RoleMiddleware("admin"), handlers.GetMember)                          //查詢特定會員
 				membersWithAuth.GET("/:id/history", MemberRentHistoryMiddleware(), handlers.GetMemberRentHistory) //查詢特定會員的租賃記錄
 				membersWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateMember)                       //更新特定會員的資訊
-				membersWithAuth.PUT("/:id/license-plate", RoleMiddleware("renter"), handlers.UpdateLicensePlate)  //更新車牌號碼
 				membersWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteMember)                    //刪除特定會員
 			}
 		}
 
-		// 車位路由
+		// 停車場路由
 		parking := v1.Group("/parking")
 		{
 			parkingWithAuth := parking.Group("")
@@ -371,7 +316,7 @@ func Path(router *gin.RouterGroup) {
 		rent := v1.Group("/rent")
 		{
 			rentWithAuth := rent.Group("")
-			rentWithAuth.Use(AuthMiddleware(), RoleMiddleware("renter"), LicenseMiddleware()) // 添加LicenseMiddleware，只限renter路由
+			rentWithAuth.Use(AuthMiddleware(), RoleMiddleware("renter"))
 			{
 				rentWithAuth.POST("", RoleMiddleware("renter"), handlers.EnterParkingSpot)                                  //租用車位（車牌掃描輸入）
 				rentWithAuth.POST("/leave", RoleMiddleware("renter"), handlers.LeaveParkingSpot)                            //離開結算（車牌掃描輸入）
@@ -382,5 +327,20 @@ func Path(router *gin.RouterGroup) {
 				rentWithAuth.GET("/availability/:id", RoleMiddleware("renter", "admin"), handlers.CheckParkingAvailability) //查詢特定停車場可用位子
 			}
 		}
+
+		// 車輛路由
+		vehicles := v1.Group("/vehicles")
+		{
+			vehicleWithAuth := vehicles.Group("")
+			vehicleWithAuth.Use(AuthMiddleware(), RoleMiddleware("renter", "admin"))
+			{
+				vehicleWithAuth.GET("/vehicle", handlers.GetMyVehicles)       // 車輛清單
+				vehicleWithAuth.POST("", handlers.CreateVehicle)              // 新增車輛
+				vehicleWithAuth.PUT("", handlers.UpdateVehicle)               // 修改車輛
+				vehicleWithAuth.DELETE("", handlers.DeleteVehicle)            // 刪除車輛
+				vehicleWithAuth.PATCH("/default", handlers.SetDefaultVehicle) // 設為預設車輛
+			}
+		}
+
 	}
 }

@@ -402,3 +402,88 @@ func UpdateLicensePlate(memberID int, licensePlate string) error {
 	log.Printf("Successfully updated license plate for member %d to %s", memberID, licensePlate)
 	return nil
 }
+
+// GetVehiclesByMemberID 取得某會員的所有車輛
+func GetVehiclesByMemberID(memberID int) ([]models.Vehicle, error) {
+	var vehicles []models.Vehicle
+	err := database.DB.Where("member_id = ?", memberID).Find(&vehicles).Error
+	if err != nil {
+		log.Printf("Failed to get vehicles for member %d: %v", memberID, err)
+		return nil, fmt.Errorf("查詢車輛失敗: %w", err)
+	}
+	return vehicles, nil
+}
+
+// CreateVehicle 新增車輛（自動處理第一台車設為預設）
+func CreateVehicle(vehicle *models.Vehicle) error {
+	// 檢查車牌是否重複
+	var existing models.Vehicle
+	if err := database.DB.Where("license_plate = ?", vehicle.LicensePlate).First(&existing).Error; err == nil {
+		return fmt.Errorf("車牌 %s 已被使用", vehicle.LicensePlate)
+	} else if err != gorm.ErrRecordNotFound {
+		return fmt.Errorf("檢查車牌重複失敗: %w", err)
+	}
+
+	// 如果這是會員第一台車，自動設為預設
+	var count int64
+	database.DB.Model(&models.Vehicle{}).Where("member_id = ?", vehicle.MemberID).Count(&count)
+	if count == 0 {
+		vehicle.IsDefault = true
+	}
+
+	if err := database.DB.Create(vehicle).Error; err != nil {
+		return fmt.Errorf("新增車輛失敗: %w", err)
+	}
+	log.Printf("會員 %d 新增車輛成功：%s", vehicle.MemberID, vehicle.LicensePlate)
+	return nil
+}
+
+// UpdateVehicle 更新車輛資訊
+func UpdateVehicle(licensePlate string, memberID int, updates map[string]interface{}) error {
+	var vehicle models.Vehicle
+	if err := database.DB.Where("license_plate = ? AND member_id = ?", licensePlate, memberID).First(&vehicle).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("車牌不存在或不屬於您")
+		}
+		return fmt.Errorf("查詢車輛失敗: %w", err)
+	}
+
+	if err := database.DB.Model(&vehicle).Updates(updates).Error; err != nil {
+		return fmt.Errorf("更新車輛失敗: %w", err)
+	}
+	return nil
+}
+
+// DeleteVehicle 刪除車輛
+func DeleteVehicle(licensePlate string, memberID int) error {
+	var vehicle models.Vehicle
+	if err := database.DB.Where("license_plate = ? AND member_id = ?", licensePlate, memberID).First(&vehicle).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("車牌 %s 不存在或不屬於您", licensePlate)
+		}
+		return err
+	}
+
+	if err := database.DB.Delete(&vehicle).Error; err != nil {
+		return fmt.Errorf("刪除車輛失敗: %w", err)
+	}
+	return nil
+}
+
+// SetDefaultVehicle 設為預設車輛（其他車取消預設）
+func SetDefaultVehicle(licensePlate string, memberID int) error {
+	// 先取消所有預設
+	if err := database.DB.Model(&models.Vehicle{}).
+		Where("member_id = ?", memberID).
+		Update("is_default", false).Error; err != nil {
+		return err
+	}
+
+	// 再設定這台為預設
+	if err := database.DB.Model(&models.Vehicle{}).
+		Where("license_plate = ? AND member_id = ?", licensePlate, memberID).
+		Update("is_default", true).Error; err != nil {
+		return fmt.Errorf("設定預設車輛失敗: %w", err)
+	}
+	return nil
+}

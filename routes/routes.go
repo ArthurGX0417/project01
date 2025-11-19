@@ -334,7 +334,7 @@ func Path(router *gin.RouterGroup) {
 			vehicleWithAuth := vehicles.Group("")
 			vehicleWithAuth.Use(AuthMiddleware(), RoleMiddleware("renter", "admin"))
 			{
-				vehicleWithAuth.GET("/vehicle", handlers.GetMyVehicles)       // 車輛清單
+				vehicleWithAuth.GET("/vehicle", handlers.GetMyVehicles)       // 查詢車輛清單
 				vehicleWithAuth.POST("", handlers.CreateVehicle)              // 新增車輛
 				vehicleWithAuth.PUT("", handlers.UpdateVehicle)               // 修改車輛
 				vehicleWithAuth.DELETE("", handlers.DeleteVehicle)            // 刪除車輛

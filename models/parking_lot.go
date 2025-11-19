@@ -2,16 +2,15 @@ package models
 
 // ParkingLot 定義停車場模型
 type ParkingLot struct {
-	ParkingLotID   int           `json:"parking_lot_id" gorm:"primaryKey;autoIncrement;type:INT"`
-	Type           string        `json:"type" gorm:"type:enum('flat', 'mechanical')" binding:"omitempty,oneof=flat mechanical"`
-	Address        string        `json:"address" gorm:"type:varchar(100)" binding:"omitempty,max=100"`
-	HourlyRate     float64       `json:"hourly_rate" gorm:"type:decimal(10,2)" binding:"omitempty,gte=0"`
-	TotalSpots     int           `json:"total_spots" gorm:"type:INT" binding:"omitempty,gte=0"`
-	Longitude      float64       `json:"longitude" gorm:"type:decimal(9,6)" binding:"omitempty,gte=-180,lte=180"`
-	Latitude       float64       `json:"latitude" gorm:"type:decimal(9,6)" binding:"omitempty,gte=-90,lte=90"`
-	ParkingSpots   []ParkingSpot `json:"parking_spots" gorm:"foreignKey:ParkingLotID;references:ParkingLotID"`
-	Rents          []Rent        `gorm:"foreignKey:ParkingLotID" json:"-"`
-	RemainingSpots int           `json:"-" gorm:"-"` // transient，不存DB，用於計算剩餘位子
+	ParkingLotID   int     `json:"parking_lot_id" gorm:"primaryKey;autoIncrement;type:INT"`
+	Type           string  `json:"type" gorm:"type:enum('flat', 'mechanical')" binding:"omitempty,oneof=flat mechanical"`
+	Address        string  `json:"address" gorm:"type:varchar(100)" binding:"omitempty,max=100"`
+	HourlyRate     float64 `json:"hourly_rate" gorm:"type:decimal(10,2)" binding:"omitempty,gte=0"`
+	TotalSpots     int     `json:"total_spots" gorm:"type:INT" binding:"omitempty,gte=0"`
+	Longitude      float64 `json:"longitude" gorm:"type:decimal(9,6)" binding:"omitempty,gte=-180,lte=180"`
+	Latitude       float64 `json:"latitude" gorm:"type:decimal(9,6)" binding:"omitempty,gte=-90,lte=90"`
+	Rents          []Rent  `gorm:"foreignKey:ParkingLotID" json:"-"`
+	RemainingSpots int     `json:"-" gorm:"-"` // transient，不存DB，用於計算剩餘位子
 }
 
 func (ParkingLot) TableName() string {

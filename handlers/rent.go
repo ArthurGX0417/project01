@@ -80,28 +80,34 @@ func EnterParkingSpot(c *gin.Context) {
 }
 
 // LeaveParkingSpot 出場
+// LeaveParkingSpot 出場（強制回傳 total_cost！）
 func LeaveParkingSpot(c *gin.Context) {
 	var input LeaveInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		log.Printf("Invalid input data: %v", err)
 		ErrorResponse(c, http.StatusBadRequest, "無效的輸入資料", err.Error())
 		return
 	}
 
 	endTime, err := parseTimeWithCST(input.EndTime)
 	if err != nil {
-		log.Printf("Failed to parse end_time %s: %v", input.EndTime, err)
 		ErrorResponse(c, http.StatusBadRequest, "無效的結束時間", err.Error())
 		return
 	}
 
-	if err := services.LeaveParkingSpot(input.LicensePlate, endTime); err != nil {
-		log.Printf("Failed to leave parking spot: license_plate=%s, error=%v", input.LicensePlate, err)
-		ErrorResponse(c, http.StatusInternalServerError, "出場失敗", err.Error())
+	// 改這裡！收到 rent 物件
+	rentRecord, err := services.LeaveParkingSpot(input.LicensePlate, endTime)
+	if err != nil {
+		log.Printf("Leave parking failed: %v", err)
+		ErrorResponse(c, http.StatusBadRequest, "出場失敗", err.Error())
 		return
 	}
 
-	SuccessResponse(c, http.StatusOK, "出場成功", nil)
+	// 直接回傳完整資訊給前端！
+	SuccessResponse(c, http.StatusOK, "出場成功，本次停車費用已計算", map[string]interface{}{
+		"parking_record": rentRecord.ToResponse(),
+		"total_cost":     rentRecord.TotalCost, // 前端最愛的欄位
+		"duration_hours": endTime.Sub(rentRecord.StartTime).Hours(),
+	})
 }
 
 // GetCurrentlyRentedSpots 查詢當前租用的車位

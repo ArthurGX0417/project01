@@ -57,7 +57,7 @@ func EnterParkingSpot(licensePlate string, parkingLotID int, startTime time.Time
 }
 
 // LeaveParkingSpot 出場記錄並計算費用
-func LeaveParkingSpot(licensePlate string, endTime time.Time) error {
+func LeaveParkingSpot(licensePlate string, endTime time.Time) (*models.Rent, error) {
 	var rent models.Rent
 
 	if err := database.DB.
@@ -67,28 +67,28 @@ func LeaveParkingSpot(licensePlate string, endTime time.Time) error {
 		First(&rent).Error; err != nil {
 
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("no active parking record found: license_plate=%s", licensePlate)
+			return nil, fmt.Errorf("no active parking record found: license_plate=%s", licensePlate)
 		}
-		return fmt.Errorf("failed to query active parking record: %w", err)
+		return nil, fmt.Errorf("failed to query active parking record: %w", err)
 	}
 
 	totalCost, err := CalculateRentCost(rent.StartTime, endTime, rent.ParkingLot)
 	if err != nil {
-		return fmt.Errorf("fee calculation failed: %w", err)
+		return nil, fmt.Errorf("fee calculation failed: %w", err)
 	}
 
 	rent.EndTime = &endTime
 	rent.TotalCost = &totalCost
 
 	if err := database.DB.Save(&rent).Error; err != nil {
-		return fmt.Errorf("exit update failed: %w", err)
+		return nil, fmt.Errorf("exit update failed: %w", err)
 	}
 
 	duration := endTime.Sub(rent.StartTime).Hours()
 	log.Printf("EXIT_SUCCESS | license_plate=%s parking_lot_id=%d duration_hours=%.2f cost=%.2f exit_time=%s",
 		licensePlate, rent.ParkingLotID, duration, totalCost, endTime.Format(time.RFC3339))
 
-	return nil
+	return &rent, nil // 關鍵！回傳完整 rent 紀錄
 }
 
 // GetRentRecordsByLicensePlate 查詢車主的所有租用紀錄

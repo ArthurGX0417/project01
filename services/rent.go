@@ -32,28 +32,26 @@ func CalculateRentCost(startTime time.Time, endTime time.Time, parkingLot models
 
 // EnterParkingSpot 進場記錄車牌和進場時間
 func EnterParkingSpot(licensePlate string, parkingLotID int, startTime time.Time) error {
-	var member models.Member
-	if err := database.DB.Where("license_plate = ?", licensePlate).First(&member).Error; err != nil {
+	// 驗證車牌是否存在於 vehicle 表（未來改成查 vehicle）
+	var vehicle models.Vehicle
+	if err := database.DB.Where("license_plate = ?", licensePlate).First(&vehicle).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("member with license_plate %s not found", licensePlate)
+			return fmt.Errorf("車牌 %s 未註冊", licensePlate)
 		}
-		return fmt.Errorf("failed to verify member: %w", err)
+		return fmt.Errorf("查詢車輛失敗: %w", err)
 	}
 
-	// 直接建立 rent，不碰任何 parking_spot
 	rent := &models.Rent{
 		LicensePlate: licensePlate,
-		ParkingLotID: parkingLotID, // 關鍵！記住停在哪個停車場
+		ParkingLotID: parkingLotID,
 		StartTime:    startTime,
-		Status:       "pending",
 	}
 
 	if err := database.DB.Create(rent).Error; err != nil {
-		return fmt.Errorf("create rent failed: %w", err)
+		return fmt.Errorf("進場失敗: %w", err)
 	}
 
-	log.Printf("進場成功：%s 於 %s 進入停車場 %d（僅開單，不佔車位）",
-		licensePlate, startTime.Format("15:04:05"), parkingLotID)
+	log.Printf("進場成功：%s 於 %s 進入停車場 %d", licensePlate, startTime.Format("15:04:05"), parkingLotID)
 	return nil
 }
 
@@ -61,66 +59,48 @@ func EnterParkingSpot(licensePlate string, parkingLotID int, startTime time.Time
 func LeaveParkingSpot(licensePlate string, endTime time.Time) error {
 	var rent models.Rent
 
-	// 直接 Preload ParkingLot（因為我們現在有 parking_lot_id 欄位）
 	if err := database.DB.
-		Preload("ParkingLot"). // 這裡改對了！
-		Where("license_plate = ? AND status = ?", licensePlate, "pending").
+		Preload("ParkingLot").
+		Where("license_plate = ? AND end_time IS NULL", licensePlate). // 改這裡！
 		Order("start_time DESC").
 		First(&rent).Error; err != nil {
 
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("此車牌目前沒有未結帳的停車紀錄：%s", licensePlate)
+			return fmt.Errorf("車牌 %s 目前沒有停車中的紀錄", licensePlate)
 		}
 		return fmt.Errorf("查詢停車紀錄失敗: %w", err)
 	}
 
-	// 計算費用（直接用 rent.ParkingLot.HourlyRate）
 	totalCost, err := CalculateRentCost(rent.StartTime, endTime, rent.ParkingLot)
 	if err != nil {
 		return fmt.Errorf("計算費用失敗: %w", err)
 	}
 
-	// 更新這筆 rent
 	rent.EndTime = &endTime
 	rent.TotalCost = &totalCost
-	rent.Status = "completed"
 
 	if err := database.DB.Save(&rent).Error; err != nil {
-		return fmt.Errorf("更新離場資料失敗: %w", err)
+		return fmt.Errorf("離場更新失敗: %w", err)
 	}
 
-	log.Printf("離場成功：%s 停車 %.2f 小時，費用 %.2f 元",
-		licensePlate, endTime.Sub(rent.StartTime).Hours(), totalCost)
-
+	log.Printf("離場成功：%s 停車 %.2f 小時，費用 %.2f 元", licensePlate, endTime.Sub(rent.StartTime).Hours(), totalCost)
 	return nil
 }
 
 // GetRentRecordsByLicensePlate 查詢車主的所有租用紀錄
 func GetRentRecordsByLicensePlate(licensePlate string, requestingLicensePlate string) ([]models.Rent, error) {
-	var member models.Member
-	if err := database.DB.Where("license_plate = ?", requestingLicensePlate).First(&member).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("member with license_plate %s not found", requestingLicensePlate)
-		}
-		log.Printf("Failed to verify requesting member: license_plate=%s, error=%v", requestingLicensePlate, err)
-		return nil, fmt.Errorf("failed to verify requesting member: %w", err)
-	}
-
 	if licensePlate != requestingLicensePlate {
-		log.Printf("Unauthorized access: requesting_license_plate=%s, target_license_plate=%s", requestingLicensePlate, licensePlate)
-		return nil, fmt.Errorf("unauthorized access to rent records")
+		return nil, fmt.Errorf("無權查看他人紀錄")
 	}
 
 	var rents []models.Rent
 	if err := database.DB.
 		Preload("ParkingLot").
 		Where("license_plate = ?", licensePlate).
+		Order("start_time DESC").
 		Find(&rents).Error; err != nil {
-		log.Printf("Failed to query rent records for license_plate %s: error=%v", licensePlate, err)
-		return nil, fmt.Errorf("failed to query rent records: %w", err)
+		return nil, err
 	}
-
-	log.Printf("Successfully fetched %d rent records for license_plate %s", len(rents), licensePlate)
 	return rents, nil
 }
 
@@ -128,47 +108,46 @@ func GetRentRecordsByLicensePlate(licensePlate string, requestingLicensePlate st
 func GetTotalCostByLicensePlate(licensePlate string) (float64, error) {
 	var totalCost float64
 	err := database.DB.Model(&models.Rent{}).
-		Where("license_plate = ? AND status = ?", licensePlate, "completed").
-		Select("COALESCE(SUM(total_cost), 0)").Scan(&totalCost).Error
+		Where("license_plate = ? AND end_time IS NOT NULL", licensePlate). // 改這裡！
+		Select("COALESCE(SUM(total_cost), 0)").
+		Scan(&totalCost).Error
 	if err != nil {
-		log.Printf("Failed to calculate total cost for license_plate %s: error=%v", licensePlate, err)
-		return 0, fmt.Errorf("failed to calculate total cost: %w", err)
+		return 0, err
 	}
-	log.Printf("Successfully calculated total cost %.2f for license_plate %s", totalCost, licensePlate)
 	return totalCost, nil
 }
 
 // CheckParkingAvailability 查詢特定停車場可用位子
 func CheckParkingAvailability(parkingLotID int) (int64, error) {
-	var totalSpots int64
-	var pendingCount int64
+	var totalSpots, parkingCount int64
 
-	// 1. 取得該停車場總車位數
 	if err := database.DB.Model(&models.ParkingLot{}).
-		Where("parking_lot_id = ?", parkingLotID).
+		Where(" parking_lot_id = ?", parkingLotID).
 		Pluck("total_spots", &totalSpots).Error; err != nil {
-		return 0, fmt.Errorf("failed to get total spots: %w", err)
+		return 0, err
 	}
 
-	// 2. 計算該停車場目前 pending 的車（就是正在停的車）
 	if err := database.DB.Model(&models.Rent{}).
-		Where("parking_lot_id = ? AND status = ?", parkingLotID, "pending").
-		Count(&pendingCount).Error; err != nil {
-		return 0, fmt.Errorf("failed to count pending rents: %w", err)
+		Where("parking_lot_id = ? AND end_time IS NULL", parkingLotID). // 改這裡！
+		Count(&parkingCount).Error; err != nil {
+		return 0, err
 	}
 
-	available := totalSpots - pendingCount
-	log.Printf("停車場 %d：總車位 %d，進行中 %d，剩餘 %d", parkingLotID, totalSpots, pendingCount, available)
+	available := totalSpots - parkingCount
+	if available < 0 {
+		available = 0
+	}
+	log.Printf("停車場 %d：總車位 %d，停車中 %d，剩餘 %d", parkingLotID, totalSpots, parkingCount, available)
 	return available, nil
 }
 
 // GetCurrentlyRentedSpots 查詢當前租用的車位
 func GetCurrentlyRentedSpots(licensePlate string) ([]models.Rent, error) {
 	var rents []models.Rent
-	if err := database.DB.Where("license_plate = ? AND status = ?", licensePlate, "pending").Find(&rents).Error; err != nil {
-		log.Printf("Failed to get currently rented spots for license_plate %s: %v", licensePlate, err)
-		return nil, fmt.Errorf("failed to get currently rented spots: %w", err)
+	if err := database.DB.
+		Where("license_plate = ? AND end_time IS NULL", licensePlate). // 改這裡！
+		Find(&rents).Error; err != nil {
+		return nil, fmt.Errorf("查詢停車中紀錄失敗: %w", err)
 	}
-	log.Printf("Successfully retrieved %d currently rented spots for license_plate %s", len(rents), licensePlate)
 	return rents, nil
 }

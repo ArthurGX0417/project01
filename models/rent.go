@@ -1,4 +1,3 @@
-// models/rent.go
 package models
 
 import (
@@ -12,7 +11,6 @@ type Rent struct {
 	StartTime    time.Time  `gorm:"primaryKey;column:start_time" json:"start_time"`
 	EndTime      *time.Time `gorm:"column:end_time" json:"end_time,omitempty"`
 	TotalCost    *float64   `gorm:"type:decimal(6,2);column:total_cost" json:"total_cost,omitempty"`
-	Status       string     `gorm:"type:enum('pending','completed');default:'pending';column:status" json:"status"`
 	ParkingLot   ParkingLot `gorm:"foreignKey:ParkingLotID;references:ParkingLotID" json:"parking_lot,omitempty"`
 }
 
@@ -27,7 +25,6 @@ type RentResponse struct {
 	StartTime    string  `json:"start_time"`
 	EndTime      *string `json:"end_time,omitempty"`
 	TotalCost    *string `json:"total_cost,omitempty"`
-	Status       string  `json:"status"`
 }
 
 func (r *Rent) ToResponse() RentResponse {
@@ -46,6 +43,5 @@ func (r *Rent) ToResponse() RentResponse {
 		StartTime:    r.StartTime.Format(time.RFC3339),
 		EndTime:      endTimeStr,
 		TotalCost:    costStr,
-		Status:       r.Status,
 	}
 }

@@ -36,6 +36,7 @@ func main() {
 	database.DB.AutoMigrate(
 		&models.Member{},
 		&models.ParkingLot{},
+		&models.Vehicle{},
 		&models.Rent{},
 	)
 	log.Println("Database migration completed")

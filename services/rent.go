@@ -91,20 +91,32 @@ func LeaveParkingSpot(licensePlate string, endTime time.Time) (*models.Rent, err
 	return &rent, nil // 關鍵！回傳完整 rent 紀錄
 }
 
-// GetRentRecordsByLicensePlate 查詢車主的所有租用紀錄
-func GetRentRecordsByLicensePlate(licensePlate string, requestingLicensePlate string) ([]models.Rent, error) {
-	if licensePlate != requestingLicensePlate {
-		return nil, fmt.Errorf("permission denied: cannot view other user's records")
+// GetRentRecordsByMemberID 查詢會員的所有租用紀錄
+func GetRentRecordsByMemberID(memberID int) ([]models.Rent, error) {
+	var rents []models.Rent
+
+	// 先查這個 member 的所有車牌
+	var vehiclePlates []string
+	if err := database.DB.
+		Model(&models.Vehicle{}).
+		Where("member_id = ?", memberID).
+		Pluck("license_plate", &vehiclePlates).Error; err != nil {
+		return nil, fmt.Errorf("failed to get vehicles for member %d: %w", memberID, err)
 	}
 
-	var rents []models.Rent
+	if len(vehiclePlates) == 0 {
+		return []models.Rent{}, nil // 沒車就回空陣列，不算錯誤
+	}
+
+	// 再查這些車牌的所有租賃紀錄
 	if err := database.DB.
 		Preload("ParkingLot").
-		Where("license_plate = ?", licensePlate).
+		Where("license_plate IN ?", vehiclePlates).
 		Order("start_time DESC").
 		Find(&rents).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch rent records: %w", err)
 	}
+
 	return rents, nil
 }
 
@@ -148,15 +160,28 @@ func CheckParkingAvailability(parkingLotID int) (int64, error) {
 	return available, nil
 }
 
-// GetCurrentlyRentedSpots 查詢當前租用的車位（正在停中的車）
-func GetCurrentlyRentedSpots(licensePlate string) ([]models.Rent, error) {
+// GetCurrentlyRentedSpotsByMemberID 查詢當前租用的車位（正在停中的車）
+func GetCurrentlyRentedSpotsByMemberID(memberID int) ([]models.Rent, error) {
 	var rents []models.Rent
+
+	var vehiclePlates []string
 	if err := database.DB.
-		Where("license_plate = ? AND end_time IS NULL", licensePlate).
-		Find(&rents).Error; err != nil {
-		return nil, fmt.Errorf("failed to query active parking records: %w", err)
+		Model(&models.Vehicle{}).
+		Where("member_id = ?", memberID).
+		Pluck("license_plate", &vehiclePlates).Error; err != nil {
+		return nil, fmt.Errorf("failed to get vehicles: %w", err)
 	}
 
-	log.Printf("ACTIVE_PARKING | license_plate=%s active_records=%d", licensePlate, len(rents))
+	if len(vehiclePlates) == 0 {
+		return []models.Rent{}, nil
+	}
+
+	if err := database.DB.
+		Where("license_plate IN ? AND end_time IS NULL", vehiclePlates).
+		Find(&rents).Error; err != nil {
+		return nil, fmt.Errorf("failed to query active records: %w", err)
+	}
+
+	log.Printf("ACTIVE_PARKING | member_id=%d active_records=%d", memberID, len(rents))
 	return rents, nil
 }

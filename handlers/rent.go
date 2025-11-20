@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 // RentInput 定義用於綁定請求的輸入結構體
@@ -80,7 +78,6 @@ func EnterParkingSpot(c *gin.Context) {
 }
 
 // LeaveParkingSpot 出場
-// LeaveParkingSpot 出場（強制回傳 total_cost！）
 func LeaveParkingSpot(c *gin.Context) {
 	var input LeaveInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -112,50 +109,49 @@ func LeaveParkingSpot(c *gin.Context) {
 
 // GetCurrentlyRentedSpots 查詢當前租用的車位
 func GetCurrentlyRentedSpots(c *gin.Context) {
-	licensePlate := c.GetString("license_plate") // 從 token 中獲取
-	if licensePlate == "" {
-		ErrorResponse(c, http.StatusUnauthorized, "未授權", "license_plate not found in token")
+	memberID := c.GetInt("member_id")
+	if memberID == 0 {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found")
 		return
 	}
 
-	rents, err := services.GetCurrentlyRentedSpots(licensePlate)
+	rents, err := services.GetCurrentlyRentedSpotsByMemberID(memberID)
 	if err != nil {
-		log.Printf("Failed to get currently rented spots: license_plate=%s, error=%v", licensePlate, err)
+		log.Printf("Failed to get active parking for member %d: %v", memberID, err)
 		ErrorResponse(c, http.StatusInternalServerError, "查詢失敗", err.Error())
 		return
 	}
 
-	rentResponses := make([]models.RentResponse, len(rents))
-	for i, rent := range rents {
-		rentResponses[i] = rent.ToResponse()
+	responses := make([]models.RentResponse, len(rents))
+	for i, r := range rents {
+		responses[i] = r.ToResponse()
 	}
-	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)
+
+	SuccessResponse(c, http.StatusOK, "查詢成功", responses)
 }
 
-// GetRentRecordsByLicensePlate 查詢租用紀錄
-func GetRentRecordsByLicensePlate(c *gin.Context) {
-	licensePlate := c.GetString("license_plate") // 從 token 中獲取
-	if licensePlate == "" {
-		ErrorResponse(c, http.StatusUnauthorized, "未授權", "license_plate not found in token")
+// GetRentRecordsByMember 查詢租用紀錄
+func GetRentRecordsByMember(c *gin.Context) {
+	memberID := c.GetInt("member_id") // 改用這個！從 middleware 來的
+	if memberID == 0 {
+		ErrorResponse(c, http.StatusUnauthorized, "未授權", "member_id not found")
 		return
 	}
 
-	rents, err := services.GetRentRecordsByLicensePlate(licensePlate, licensePlate)
+	// 直接用 member_id 去查所有車牌的租賃紀錄
+	rents, err := services.GetRentRecordsByMemberID(memberID)
 	if err != nil {
-		log.Printf("Failed to get rent records: license_plate=%s, error=%v", licensePlate, err)
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			ErrorResponse(c, http.StatusNotFound, "無租賃記錄", err.Error())
-		} else {
-			ErrorResponse(c, http.StatusForbidden, "無權限", err.Error())
-		}
+		log.Printf("Failed to get rent records for member %d: %v", memberID, err)
+		ErrorResponse(c, http.StatusInternalServerError, "查詢失敗", err.Error())
 		return
 	}
 
-	rentResponses := make([]models.RentResponse, len(rents))
-	for i, rent := range rents {
-		rentResponses[i] = rent.ToResponse()
+	responses := make([]models.RentResponse, len(rents))
+	for i, r := range rents {
+		responses[i] = r.ToResponse()
 	}
-	SuccessResponse(c, http.StatusOK, "查詢成功", rentResponses)
+
+	SuccessResponse(c, http.StatusOK, "查詢成功", responses)
 }
 
 // GetTotalCostByLicensePlate 查詢總費用

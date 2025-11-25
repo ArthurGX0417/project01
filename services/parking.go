@@ -27,36 +27,39 @@ func GetAvailableParkingLots(latitude, longitude, radius float64) ([]models.Park
 	distanceSQL := `
         6371 * acos(
             cos(radians(?)) * cos(radians(latitude)) * 
-            cos(radians(longitude) - radians(?)) + 
+            cos(radians(longitude) - ?)) + 
             sin(radians(?)) * sin(radians(latitude))
         )
     `
 
+	// 查半徑內所有停車場
 	query := database.DB.Where(distanceSQL+" <= ?", latitude, longitude, latitude, radius)
 	if err := query.Find(&lots).Error; err != nil {
 		log.Printf("Failed to query parking lots: %v", err)
 		return nil, fmt.Errorf("failed to query parking lots: %w", err)
 	}
 
-	// 計算每個停車場剩餘車位（用 pending rent 數量）
-	filteredLots := []models.ParkingLot{}
+	// 正確做法：用 end_time IS NULL 判斷「還在停的車」
+	filteredLots := make([]models.ParkingLot, 0, len(lots))
 	for _, lot := range lots {
-		var pendingCount int64
-		if err := database.DB.Model(&models.Rent{}).
-			Where("parking_lot_id = ? AND status = ?", lot.ParkingLotID, "pending").
-			Count(&pendingCount).Error; err != nil {
-			log.Printf("Failed to count pending rents for lot %d: %v", lot.ParkingLotID, err)
+		var parkingCount int64
+		err := database.DB.Model(&models.Rent{}).
+			Where("parking_lot_id = ? AND end_time IS NULL", lot.ParkingLotID). // 關鍵改這行！
+			Count(&parkingCount).Error
+
+		if err != nil {
+			log.Printf("Failed to count active parking for lot %d: %v", lot.ParkingLotID, err)
 			continue
 		}
 
-		remaining := lot.TotalSpots - int(pendingCount)
+		remaining := lot.TotalSpots - int(parkingCount)
 		if remaining > 0 {
 			lot.RemainingSpots = remaining
 			filteredLots = append(filteredLots, lot)
 		}
 	}
 
-	log.Printf("Successfully retrieved %d available parking lots within %.1f km", len(filteredLots), radius)
+	log.Printf("Found %d parking lots with available spots within %.1f km", len(filteredLots), radius)
 	return filteredLots, nil
 }
 

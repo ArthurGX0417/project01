@@ -8,6 +8,7 @@ import (
 	"project01/services"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -245,4 +246,61 @@ func GetAllParkingLots(c *gin.Context) {
 
 	SuccessResponse(c, http.StatusOK, "查詢成功", parkingLotResponses)
 	log.Printf("Successfully retrieved %d parking lots for admin", len(parkingLots))
+}
+
+// handlers/parking.go → 完全正確版（已修正 nil + 欄位名稱）
+func GetParkingIncome(c *gin.Context) {
+	// 權限檢查：只有 admin
+	if c.GetString("role") != "admin" {
+		ErrorResponse(c, http.StatusForbidden, "僅管理員可查看收入報表", "")
+		return
+	}
+
+	// 解析 parking_lot_id
+	lotIDStr := c.Query("parking_lot_id")
+	if lotIDStr == "" {
+		ErrorResponse(c, http.StatusBadRequest, "缺少 parking_lot_id 參數", "")
+		return
+	}
+	parkingLotID, err := strconv.Atoi(lotIDStr)
+	if err != nil || parkingLotID <= 0 {
+		ErrorResponse(c, http.StatusBadRequest, "無效的 parking_lot_id", err.Error())
+		return
+	}
+
+	// 解析日期
+	startStr := c.Query("start_date")
+	endStr := c.Query("end_date")
+	if startStr == "" || endStr == "" {
+		ErrorResponse(c, http.StatusBadRequest, "請提供 start_date 和 end_date", "")
+		return
+	}
+
+	startDate, err1 := time.Parse("2006-01-02", startStr)
+	endDate, err2 := time.Parse("2006-01-02", endStr)
+	if err1 != nil || err2 != nil {
+		ErrorResponse(c, http.StatusBadRequest, "日期格式錯誤，應為 YYYY-MM-DD", "")
+		return
+	}
+	// 包含整天
+	endDate = endDate.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+
+	report, err := services.GetParkingLotIncome(parkingLotID, startDate, endDate)
+	if err != nil {
+		log.Printf("Income query failed: %v", err)
+		ErrorResponse(c, http.StatusInternalServerError, "查詢收入失敗", err.Error())
+		return
+	}
+
+	SuccessResponse(c, http.StatusOK, "查詢成功", map[string]interface{}{
+		"parking_lot_id":   report.ParkingLotID,
+		"parking_lot_name": report.ParkingLotName, // 這裡會自動對應正確欄位
+		"total_income":     report.TotalIncome,
+		"total_hours":      report.TotalHours,
+		"total_records":    report.TotalRecords,
+		"date_range": map[string]string{
+			"start": startStr,
+			"end":   c.Query("end_date"),
+		},
+	})
 }

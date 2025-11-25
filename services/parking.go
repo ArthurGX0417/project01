@@ -6,6 +6,7 @@ import (
 	"log"
 	"project01/database"
 	"project01/models"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -159,4 +160,58 @@ func GetAllParkingLots() ([]models.ParkingLot, error) {
 	}
 
 	return lots, nil
+}
+
+// services/parking.go → 完全正確版（用 Address 當名稱）
+type IncomeReport struct {
+	ParkingLotID   int     `json:"parking_lot_id"`
+	ParkingLotName string  `json:"parking_lot_name"` // 我們用 Address 填進去
+	TotalIncome    float64 `json:"total_income"`
+	TotalHours     float64 `json:"total_hours"`
+	TotalRecords   int64   `json:"total_records"`
+}
+
+func GetParkingLotIncome(parkingLotID int, startDate, endDate time.Time) (*IncomeReport, error) {
+	var parkingLot models.ParkingLot
+	if err := database.DB.First(&parkingLot, parkingLotID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("parking lot not found: id=%d", parkingLotID)
+		}
+		return nil, fmt.Errorf("failed to query parking lot: %w", err)
+	}
+
+	var result struct {
+		TotalIncome  *float64
+		TotalHours   float64
+		TotalRecords int64
+	}
+
+	err := database.DB.Model(&models.Rent{}).
+		Select(`
+			COALESCE(SUM(total_cost), 0) AS total_income,
+			COALESCE(SUM(TIMESTAMPDIFF(MINUTE, start_time, end_time)) / 60.0, 0) AS total_hours,
+			COUNT(*) AS total_records
+		`).
+		Where("parking_lot_id = ? AND end_time IS NOT NULL AND end_time BETWEEN ? AND ?",
+			parkingLotID, startDate, endDate).
+		Scan(&result).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate income: %w", err)
+	}
+
+	return &IncomeReport{
+		ParkingLotID:   parkingLotID,
+		ParkingLotName: parkingLot.Address, // 直接用 Address 當名稱！超乾淨！
+		TotalIncome:    getFloat(result.TotalIncome),
+		TotalHours:     result.TotalHours,
+		TotalRecords:   result.TotalRecords,
+	}, nil
+}
+
+func getFloat(ptr *float64) float64 {
+	if ptr == nil {
+		return 0
+	}
+	return *ptr
 }

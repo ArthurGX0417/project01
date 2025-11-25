@@ -12,6 +12,21 @@ import (
 	"gorm.io/gorm"
 )
 
+type MemberProfileResponse struct {
+	MemberID    int             `json:"member_id"`
+	Email       string          `json:"email"`
+	Phone       string          `json:"phone"`
+	Name        string          `json:"name"`
+	Role        string          `json:"role"`
+	PaymentInfo string          `json:"payment_info"`
+	Vehicles    []VehicleSimple `json:"vehicles"`
+}
+
+type VehicleSimple struct {
+	LicensePlate string `json:"license_plate"`
+	IsDefault    bool   `json:"is_default,omitempty"`
+}
+
 // RegisterMember 註冊會員
 func RegisterMember(member *models.Member) error {
 	// 檢查是否有重複的 email 或 phone
@@ -28,15 +43,6 @@ func RegisterMember(member *models.Member) error {
 	} else if err != gorm.ErrRecordNotFound {
 		log.Printf("Failed to check for duplicate phone: %v", err)
 		return fmt.Errorf("failed to check for duplicate phone: %w", err)
-	}
-
-	if member.LicensePlate != "" {
-		if err := database.DB.Where("license_plate = ?", member.LicensePlate).First(&existingMember).Error; err == nil {
-			return fmt.Errorf("license_plate %s is already in use", member.LicensePlate)
-		} else if err != gorm.ErrRecordNotFound {
-			log.Printf("Failed to check for duplicate license_plate: %v", err)
-			return fmt.Errorf("failed to check for duplicate license_plate: %w", err)
-		}
 	}
 
 	// 驗證密碼（至少 8 個字元，包含字母和數字）
@@ -145,30 +151,49 @@ func GetMemberByID(id int) (*models.Member, error) {
 }
 
 // GetMemberProfileData 查詢會員的個人資料（僅基本資訊）
-func GetMemberProfileData(memberID int) (*models.Member, error) {
+func GetMemberProfileData(memberID int) (*MemberProfileResponse, error) {
 	var member models.Member
 	if err := database.DB.First(&member, memberID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			log.Printf("Member with ID %d not found", memberID)
-			return nil, nil
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("member not found: %d", memberID)
 		}
-		log.Printf("Failed to get member by ID %d: %v", memberID, err)
-		return nil, fmt.Errorf("failed to get member by ID %d: %w", memberID, err)
+		return nil, fmt.Errorf("database error: %w", err)
 	}
 
-	// 解密 payment_info
-	if member.PaymentInfo != "" {
-		decryptedPaymentInfo, err := utils.DecryptPaymentInfo(member.PaymentInfo)
-		if err != nil {
-			log.Printf("Failed to decrypt payment_info for member %d: %v", memberID, err)
-			member.PaymentInfo = ""
+	// 解密信用卡
+	paymentInfo := member.PaymentInfo
+	if paymentInfo != "" {
+		if decrypted, err := utils.DecryptPaymentInfo(paymentInfo); err == nil {
+			paymentInfo = decrypted
 		} else {
-			member.PaymentInfo = decryptedPaymentInfo
+			log.Printf("Decrypt failed for member %d: %v", memberID, err)
+			paymentInfo = "****-****-****-****" // 失敗時隱藏
 		}
 	}
 
-	log.Printf("Successfully retrieved member profile with ID %d", memberID)
-	return &member, nil
+	// 查所有車牌
+	var vehicles []models.Vehicle
+	database.DB.Where("member_id = ?", memberID).Find(&vehicles)
+
+	vehList := make([]VehicleSimple, len(vehicles))
+	for i, v := range vehicles {
+		vehList[i] = VehicleSimple{
+			LicensePlate: v.LicensePlate,
+			IsDefault:    v.IsDefault,
+		}
+	}
+
+	response := &MemberProfileResponse{
+		MemberID:    member.MemberID,
+		Email:       member.Email,
+		Phone:       member.Phone,
+		Name:        member.Name,
+		Role:        member.Role,
+		PaymentInfo: paymentInfo,
+		Vehicles:    vehList,
+	}
+
+	return response, nil
 }
 
 // GetAllMembers 查詢所有會員
@@ -263,20 +288,6 @@ func UpdateMember(id int, updatedFields map[string]interface{}) error {
 				return fmt.Errorf("failed to encrypt payment_info: %w", err)
 			}
 			mappedFields["payment_info"] = encryptedPaymentInfo
-		case "license_plate":
-			licensePlateStr, ok := value.(string)
-			if !ok {
-				return fmt.Errorf("invalid license_plate type: must be a string")
-			}
-			// 檢查是否有重複的 license_plate
-			var existingMember models.Member
-			if err := database.DB.Where("license_plate = ? AND member_id != ?", licensePlateStr, id).First(&existingMember).Error; err == nil {
-				return fmt.Errorf("license_plate %s is already in use", licensePlateStr)
-			} else if err != gorm.ErrRecordNotFound {
-				log.Printf("Failed to check for duplicate license_plate: %v", err)
-				return fmt.Errorf("failed to check for duplicate license_plate: %w", err)
-			}
-			mappedFields["license_plate"] = licensePlateStr
 		case "email":
 			emailStr, ok := value.(string)
 			if !ok {
@@ -374,33 +385,6 @@ func GetMemberRentHistory(memberID int) ([]models.Rent, error) {
 
 	log.Printf("Successfully retrieved %d rent records for member %d", len(rents), memberID)
 	return rents, nil
-}
-
-// UpdateLicensePlate 更新會員的車牌號碼
-func UpdateLicensePlate(memberID int, licensePlate string) error {
-	// 驗證車牌格式（例如：X-XXXX 或 XX-XXXX）
-	if match, _ := regexp.MatchString(`^[A-Z]{1,3}-[0-9]{4}$`, licensePlate); !match {
-		return fmt.Errorf("invalid license plate format: must be X-XXXX or XX-XXXX")
-	}
-
-	// 查詢會員
-	var member models.Member
-	if err := database.DB.First(&member, memberID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("member with ID %d not found", memberID)
-		}
-		return fmt.Errorf("failed to query member with ID %d: %w", memberID, err)
-	}
-
-	// 更新車牌
-	member.LicensePlate = licensePlate
-	if err := database.DB.Save(&member).Error; err != nil {
-		log.Printf("Failed to update license plate for member %d: %v", memberID, err)
-		return fmt.Errorf("failed to update license plate for member %d: %w", memberID, err)
-	}
-
-	log.Printf("Successfully updated license plate for member %d to %s", memberID, licensePlate)
-	return nil
 }
 
 // GetVehiclesByMemberID 取得某會員的所有車輛

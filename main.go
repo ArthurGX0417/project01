@@ -99,12 +99,12 @@ func ensureAdminExists() {
 		log.Fatalf("Failed to encrypt payment info for admin: %v", err)
 	}
 	admin = models.Member{
-		Email:        "adminj0j0@gmail.com",
-		Phone:        "0936687137",
-		Password:     hashedPassword,
-		LicensePlate: "JOJ-0936", // 假設管理員車牌
-		PaymentInfo:  encryptedPayment,
-		Role:         "admin", // 設置為 admin
+		Email:       "adminj0j0@gmail.com",
+		Phone:       "0936687137",
+		Password:    hashedPassword,
+		PaymentInfo: encryptedPayment,
+		Role:        "admin",
+		Name:        "adminj0j0",
 	}
 	// 插入資料庫
 	if err := database.DB.Create(&admin).Error; err != nil {

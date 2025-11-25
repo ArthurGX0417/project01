@@ -288,7 +288,7 @@ func Path(router *gin.RouterGroup) {
 			membersWithAuth := members.Group("")
 			membersWithAuth.Use(AuthMiddleware())
 			{
-				membersWithAuth.GET("/profile", RoleMiddleware("renter"), handlers.GetMemberProfile)              //查看個人資料
+				membersWithAuth.GET("/profile", RoleMiddleware("renter"), handlers.GetProfile)                    //查看個人資料
 				membersWithAuth.GET("/all", RoleMiddleware("admin"), handlers.GetAllMembers)                      //查詢所有會員
 				membersWithAuth.GET("/:id", RoleMiddleware("admin"), handlers.GetMember)                          //查詢特定會員
 				membersWithAuth.GET("/:id/history", MemberRentHistoryMiddleware(), handlers.GetMemberRentHistory) //查詢特定會員的租賃記錄

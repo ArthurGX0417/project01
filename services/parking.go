@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"project01/database"
 	"project01/models"
 	"time"
@@ -162,56 +163,81 @@ func GetAllParkingLots() ([]models.ParkingLot, error) {
 	return lots, nil
 }
 
-// services/parking.go → 完全正確版（用 Address 當名稱）
-type IncomeReport struct {
-	ParkingLotID   int     `json:"parking_lot_id"`
-	ParkingLotName string  `json:"parking_lot_name"` // 我們用 Address 填進去
-	TotalIncome    float64 `json:"total_income"`
-	TotalHours     float64 `json:"total_hours"`
-	TotalRecords   int64   `json:"total_records"`
+// services/parking.go → 直接貼上，取代原本的 GetParkingLotIncome
+type IncomeDetail struct {
+	LicensePlate  string  `json:"license_plate"`
+	StartTime     string  `json:"start_time"`
+	EndTime       string  `json:"end_time"`
+	DurationHours float64 `json:"duration_hours"`
+	Cost          float64 `json:"cost"`
 }
 
-func GetParkingLotIncome(parkingLotID int, startDate, endDate time.Time) (*IncomeReport, error) {
+type IncomeResponse struct {
+	ParkingLotID      int    `json:"parking_lot_id"`
+	ParkingLotAddress string `json:"parking_lot_address"`
+	Summary           struct {
+		TotalIncome  float64 `json:"total_income"`
+		TotalRecords int64   `json:"total_records"`
+		TotalHours   float64 `json:"total_hours"`
+	} `json:"summary"`
+	Records   []IncomeDetail    `json:"records"`
+	DateRange map[string]string `json:"date_range"`
+}
+
+func GetParkingLotIncome(parkingLotID int, startDate, endDate time.Time) (*IncomeResponse, error) {
 	var parkingLot models.ParkingLot
 	if err := database.DB.First(&parkingLot, parkingLotID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("parking lot not found: id=%d", parkingLotID)
-		}
-		return nil, fmt.Errorf("failed to query parking lot: %w", err)
+		return nil, fmt.Errorf("parking lot not found: %d", parkingLotID)
 	}
 
-	var result struct {
-		TotalIncome  *float64
-		TotalHours   float64
-		TotalRecords int64
-	}
-
-	err := database.DB.Model(&models.Rent{}).
-		Select(`
-			COALESCE(SUM(total_cost), 0) AS total_income,
-			COALESCE(SUM(TIMESTAMPDIFF(MINUTE, start_time, end_time)) / 60.0, 0) AS total_hours,
-			COUNT(*) AS total_records
-		`).
+	var rents []models.Rent
+	err := database.DB.
 		Where("parking_lot_id = ? AND end_time IS NOT NULL AND end_time BETWEEN ? AND ?",
 			parkingLotID, startDate, endDate).
-		Scan(&result).Error
-
+		Order("end_time DESC").
+		Find(&rents).Error
 	if err != nil {
-		return nil, fmt.Errorf("failed to calculate income: %w", err)
+		return nil, err
 	}
 
-	return &IncomeReport{
-		ParkingLotID:   parkingLotID,
-		ParkingLotName: parkingLot.Address, // 直接用 Address 當名稱！超乾淨！
-		TotalIncome:    getFloat(result.TotalIncome),
-		TotalHours:     result.TotalHours,
-		TotalRecords:   result.TotalRecords,
-	}, nil
-}
-
-func getFloat(ptr *float64) float64 {
-	if ptr == nil {
-		return 0
+	response := &IncomeResponse{
+		ParkingLotID:      parkingLotID,
+		ParkingLotAddress: parkingLot.Address,
+		DateRange: map[string]string{
+			"start": startDate.Format("2006-01-02"),
+			"end":   endDate.Format("2006-01-02"),
+		},
 	}
-	return *ptr
+	response.Records = make([]IncomeDetail, 0, len(rents))
+
+	var totalIncome, totalHours float64
+
+	for _, r := range rents {
+		cost := 0.0
+		if r.TotalCost != nil {
+			cost = *r.TotalCost
+		}
+		duration := r.EndTime.Sub(r.StartTime).Hours()
+
+		response.Records = append(response.Records, IncomeDetail{
+			LicensePlate:  r.LicensePlate,
+			StartTime:     r.StartTime.Format("2006-01-02 15:04"),
+			EndTime:       r.EndTime.Format("2006-01-02 15:04"),
+			DurationHours: math.Round(duration*100) / 100,
+			Cost:          cost,
+		})
+
+		totalIncome += cost
+		totalHours += duration
+	}
+
+	response.Summary.TotalIncome = totalIncome
+	response.Summary.TotalRecords = int64(len(rents))
+	response.Summary.TotalHours = math.Round(totalHours*100) / 100
+
+	log.Printf("INCOME_REPORT | lot=%d records=%d income=%.2f from=%s to=%s",
+		parkingLotID, len(rents), totalIncome,
+		startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+
+	return response, nil
 }

@@ -23,30 +23,30 @@ func GetAvailableParkingLots(latitude, longitude, radius float64) ([]models.Park
 		radius = 50.0
 	}
 
-	// 哈弗辛公式計算距離
+	// 哈弗辛公式（括號與 radians(?) 完全對齊！）
 	distanceSQL := `
-        6371 * acos(
+        (6371 * acos(
             cos(radians(?)) * cos(radians(latitude)) * 
-            cos(radians(longitude) - ?)) + 
+            cos(radians(longitude) - radians(?)) + 
             sin(radians(?)) * sin(radians(latitude))
-        )
+        )) 
     `
 
-	// 查半徑內所有停車場
+	// 注意：這裡一定要傳 3 次 latitude, 一次 longitude
 	query := database.DB.Where(distanceSQL+" <= ?", latitude, longitude, latitude, radius)
+
 	if err := query.Find(&lots).Error; err != nil {
 		log.Printf("Failed to query parking lots: %v", err)
 		return nil, fmt.Errorf("failed to query parking lots: %w", err)
 	}
 
-	// 正確做法：用 end_time IS NULL 判斷「還在停的車」
+	// 計算剩餘車位（已改用 end_time IS NULL）
 	filteredLots := make([]models.ParkingLot, 0, len(lots))
 	for _, lot := range lots {
 		var parkingCount int64
 		err := database.DB.Model(&models.Rent{}).
-			Where("parking_lot_id = ? AND end_time IS NULL", lot.ParkingLotID). // 關鍵改這行！
+			Where("parking_lot_id = ? AND end_time IS NULL", lot.ParkingLotID).
 			Count(&parkingCount).Error
-
 		if err != nil {
 			log.Printf("Failed to count active parking for lot %d: %v", lot.ParkingLotID, err)
 			continue

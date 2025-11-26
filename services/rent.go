@@ -12,21 +12,35 @@ import (
 	"gorm.io/gorm"
 )
 
-// CalculateRentCost 根據進場和出場時間計算租賃費用，基於 parking_lot 的 hourly_rate，向上取整
+// CalculateRentCost 計算租賃費用（前15分鐘完全免費！）
 func CalculateRentCost(startTime time.Time, endTime time.Time, parkingLot models.ParkingLot) (float64, error) {
 	if endTime.Before(startTime) {
-		log.Printf("end_time %v is before start_time %v", endTime, startTime)
-		return 0, fmt.Errorf("end_time %v cannot be earlier than start_time %v", endTime, startTime)
+		return 0, fmt.Errorf("end_time cannot be earlier than start_time")
 	}
 
 	if parkingLot.HourlyRate <= 0 {
-		return 0, fmt.Errorf("invalid hourly_rate for parking_lot_id %d: HourlyRate=%.2f", parkingLot.ParkingLotID, parkingLot.HourlyRate)
+		return 0, fmt.Errorf("invalid hourly_rate: %.2f", parkingLot.HourlyRate)
 	}
 
-	durationMinutes := endTime.Sub(startTime).Minutes()
-	durationHours := math.Ceil(durationMinutes / 60.0)
+	// 計算總分鐘數（無條件進位到整分鐘）
+	duration := endTime.Sub(startTime)
+	totalMinutes := int(math.Ceil(duration.Minutes()))
 
-	totalCost := durationHours * parkingLot.HourlyRate
+	const FreeGraceMinutes = 15 //前 15 分鐘免費
+
+	if totalMinutes <= FreeGraceMinutes {
+		log.Printf("寬限期免費 | 停車 %d 分鐘 ≤ %d 分鐘，費用 0 元", totalMinutes, FreeGraceMinutes)
+		return 0, nil
+	}
+
+	// 超過寬限期才開始計費
+	chargeableMinutes := totalMinutes - FreeGraceMinutes
+	hours := int(math.Ceil(float64(chargeableMinutes) / 60.0))
+	totalCost := float64(hours) * parkingLot.HourlyRate
+
+	log.Printf("計費成功 | 總停 %d 分鐘，扣除寬限 %d 分鐘，計費 %d 分鐘，%d 小時 × %.0f 元 = %.0f 元",
+		totalMinutes, FreeGraceMinutes, chargeableMinutes, hours, parkingLot.HourlyRate, totalCost)
+
 	return totalCost, nil
 }
 
@@ -120,56 +134,6 @@ func GetRentRecordsByMemberID(memberID int) ([]models.Rent, error) {
 	return rents, nil
 }
 
-// GetTotalCostByLicensePlate 計算車主總停車費用
-func GetTotalCostByLicensePlate(licensePlate string) (float64, error) {
-	var rents []models.Rent
-	err := database.DB.
-		Where("license_plate = ? AND end_time IS NOT NULL", licensePlate).
-		Find(&rents).Error
-	if err != nil {
-		return 0, fmt.Errorf("查詢租借記錄失敗: %w", err)
-	}
-
-	if len(rents) == 0 {
-		return 0, nil // 沒租過，直接回 0
-	}
-
-	const FreeGraceMinutes = 15 //前 15 分鐘免費
-
-	var totalCost float64 = 0
-
-	for _, rent := range rents {
-		// 計算實際停車時間（分鐘，無條件進位）
-		duration := rent.EndTime.Sub(rent.StartTime)
-		totalMinutes := int(math.Ceil(duration.Minutes()))
-
-		// 關鍵：取得該筆租借所屬的停車場 HourlyRate
-		var parkingLot models.ParkingLot
-		if err := database.DB.First(&parkingLot, rent.ParkingLotID).Error; err != nil {
-			log.Printf("找不到停車場 ID %d，跳過此筆費用計算", rent.ParkingLotID)
-			continue
-		}
-
-		// 前15分鐘完全免費
-		if totalMinutes <= FreeGraceMinutes {
-			log.Printf("車牌 %s 在停車場 %d 停 %d 分鐘，符合寬限期，費用 0 元",
-				licensePlate, parkingLot.ParkingLotID, totalMinutes)
-			continue
-		}
-
-		// 超過才計費
-		chargeableMinutes := totalMinutes - FreeGraceMinutes
-		hours := int(math.Ceil(float64(chargeableMinutes) / 60.0))
-		cost := float64(hours) * parkingLot.HourlyRate
-
-		totalCost += cost
-		log.Printf("車牌 %s 在停車場 %s 停 %d 分鐘，扣除寬限後計費 %d 分鐘，費用 %.0f 元",
-			licensePlate, parkingLot.Address, totalMinutes, chargeableMinutes, cost)
-	}
-
-	return totalCost, nil
-}
-
 // CheckParkingAvailability 查詢特定停車場可用位子
 func CheckParkingAvailability(parkingLotID int) (int64, error) {
 	var totalSpots, parkingCount int64
@@ -221,4 +185,21 @@ func GetCurrentlyRentedSpotsByMemberID(memberID int) ([]models.Rent, error) {
 
 	log.Printf("ACTIVE_PARKING | member_id=%d active_records=%d", memberID, len(rents))
 	return rents, nil
+}
+
+// GetTotalCostByLicensePlate 計算車牌歷史總消費
+func GetTotalCostByLicensePlate(licensePlate string) (float64, error) {
+	var total float64
+
+	err := database.DB.Model(&models.Rent{}).
+		Where("license_plate = ? AND end_time IS NOT NULL", licensePlate).
+		Select("COALESCE(SUM(total_cost), 0)").
+		Scan(&total).Error
+
+	if err != nil {
+		return 0, fmt.Errorf("查詢總費用失敗: %w", err)
+	}
+
+	log.Printf("車牌 %s 歷史總消費：%.0f 元（已自動扣除寬限期）", licensePlate, total)
+	return total, nil
 }

@@ -122,14 +122,51 @@ func GetRentRecordsByMemberID(memberID int) ([]models.Rent, error) {
 
 // GetTotalCostByLicensePlate 計算車主總停車費用
 func GetTotalCostByLicensePlate(licensePlate string) (float64, error) {
-	var totalCost float64
-	err := database.DB.Model(&models.Rent{}).
+	var rents []models.Rent
+	err := database.DB.
 		Where("license_plate = ? AND end_time IS NOT NULL", licensePlate).
-		Select("COALESCE(SUM(total_cost), 0)").
-		Scan(&totalCost).Error
+		Find(&rents).Error
 	if err != nil {
-		return 0, fmt.Errorf("failed to calculate total cost: %w", err)
+		return 0, fmt.Errorf("查詢租借記錄失敗: %w", err)
 	}
+
+	if len(rents) == 0 {
+		return 0, nil // 沒租過，直接回 0
+	}
+
+	const FreeGraceMinutes = 15 //前 15 分鐘免費
+
+	var totalCost float64 = 0
+
+	for _, rent := range rents {
+		// 計算實際停車時間（分鐘，無條件進位）
+		duration := rent.EndTime.Sub(rent.StartTime)
+		totalMinutes := int(math.Ceil(duration.Minutes()))
+
+		// 關鍵：取得該筆租借所屬的停車場 HourlyRate
+		var parkingLot models.ParkingLot
+		if err := database.DB.First(&parkingLot, rent.ParkingLotID).Error; err != nil {
+			log.Printf("找不到停車場 ID %d，跳過此筆費用計算", rent.ParkingLotID)
+			continue
+		}
+
+		// 前15分鐘完全免費
+		if totalMinutes <= FreeGraceMinutes {
+			log.Printf("車牌 %s 在停車場 %d 停 %d 分鐘，符合寬限期，費用 0 元",
+				licensePlate, parkingLot.ParkingLotID, totalMinutes)
+			continue
+		}
+
+		// 超過才計費
+		chargeableMinutes := totalMinutes - FreeGraceMinutes
+		hours := int(math.Ceil(float64(chargeableMinutes) / 60.0))
+		cost := float64(hours) * parkingLot.HourlyRate
+
+		totalCost += cost
+		log.Printf("車牌 %s 在停車場 %s 停 %d 分鐘，扣除寬限後計費 %d 分鐘，費用 %.0f 元",
+			licensePlate, parkingLot.Address, totalMinutes, chargeableMinutes, cost)
+	}
+
 	return totalCost, nil
 }
 

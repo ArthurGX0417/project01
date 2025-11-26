@@ -200,6 +200,6 @@ func GetTotalCostByLicensePlate(licensePlate string) (float64, error) {
 		return 0, fmt.Errorf("查詢總費用失敗: %w", err)
 	}
 
-	log.Printf("車牌 %s 歷史總消費：%.0f 元（已自動扣除寬限期）", licensePlate, total)
+	log.Printf("license_plate %s total_cost：%.0f $", licensePlate, total)
 	return total, nil
 }

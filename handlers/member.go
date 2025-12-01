@@ -202,7 +202,6 @@ func GetAllMembers(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "查詢成功", memberResponses)
 }
 
-// 根據ID更新會員資料檢查
 // UpdateMember 更新會員資料
 func UpdateMember(c *gin.Context) {
 	idStr := c.Param("id")

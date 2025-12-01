@@ -292,7 +292,7 @@ func Path(router *gin.RouterGroup) {
 				membersWithAuth.GET("/all", RoleMiddleware("admin"), handlers.GetAllMembers)                      //查詢所有會員
 				membersWithAuth.GET("/:id", RoleMiddleware("admin"), handlers.GetMember)                          //查詢特定會員
 				membersWithAuth.GET("/:id/history", MemberRentHistoryMiddleware(), handlers.GetMemberRentHistory) //查詢特定會員的租賃記錄
-				membersWithAuth.PUT("/:id", RoleMiddleware("admin"), handlers.UpdateMember)                       //更新特定會員的資訊
+				membersWithAuth.PUT("/:id", RoleMiddleware("renter", "admin"), handlers.UpdateMember)             //更新特定會員的資訊
 				membersWithAuth.DELETE("/:id", RoleMiddleware("admin"), handlers.DeleteMember)                    //刪除特定會員
 			}
 		}

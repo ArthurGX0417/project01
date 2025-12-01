@@ -1,7 +1,5 @@
 package models
 
-import "time"
-
 // Vehicle 車輛表：支援一人多車 + 預設車牌
 type Vehicle struct {
 	LicensePlate string `gorm:"primaryKey;size:20;column:license_plate" json:"license_plate" binding:"required"`
@@ -14,10 +12,10 @@ type Vehicle struct {
 	// 關聯：這台車屬於哪個會員（可選 Preload）
 	Member Member `gorm:"foreignKey:MemberID;references:MemberID" json:"member,omitempty"`
 
-	// 時間欄位（GORM 自動管理）
-	CreatedAt time.Time  `gorm:"column:created_at" json:"created_at"`
-	UpdatedAt time.Time  `gorm:"column:updated_at" json:"updated_at"`
-	DeletedAt *time.Time `gorm:"column:deleted_at;index" json:"deleted_at,omitempty"`
+	// // 時間欄位（GORM 自動管理）
+	// CreatedAt time.Time  `gorm:"column:created_at" json:"created_at"`
+	// UpdatedAt time.Time  `gorm:"column:updated_at" json:"updated_at"`
+	// DeletedAt *time.Time `gorm:"column:deleted_at;index" json:"deleted_at,omitempty"`
 }
 
 // TableName 指定表名（可選，預設就是 vehicle）
@@ -42,6 +40,6 @@ func (v *Vehicle) ToResponse() VehicleResponse {
 		Model:        v.Model,
 		Color:        v.Color,
 		IsDefault:    v.IsDefault,
-		CreatedAt:    v.CreatedAt.Format("2006-01-02 15:04:05"),
+		// CreatedAt:    v.CreatedAt.Format("2006-01-02 15:04:05"),
 	}
 }

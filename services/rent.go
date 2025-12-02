@@ -208,15 +208,17 @@ func GetTotalCostByLicensePlate(licensePlate string) (float64, error) {
 func GetTotalCostByMemberID(memberID int) (float64, error) {
 	var total float64
 
+	// 先查這個 member 擁有的所有車牌 → 再去 rent 表算總金額
 	err := database.DB.Model(&models.Rent{}).
-		Where("member_id = ? AND end_time IS NOT NULL", memberID).
-		Select("COALESCE(SUM(total_cost), 0)").
+		Joins("JOIN vehicle ON rent.license_plate = vehicle.license_plate").
+		Where("vehicle.member_id = ? AND rent.end_time IS NOT NULL", memberID).
+		Select("COALESCE(SUM(rent.total_cost), 0)").
 		Scan(&total).Error
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to query total cost for member %d: %w", memberID, err)
 	}
 
-	log.Printf("MemberID %d total parking cost: %.0f TWD", memberID, total)
+	log.Printf("MemberID %d total parking cost: %.0f TWD (via vehicle join)", memberID, total)
 	return total, nil
 }

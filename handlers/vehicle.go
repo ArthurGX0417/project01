@@ -54,15 +54,15 @@ func CreateVehicle(c *gin.Context) {
 	}
 
 	if err := services.CreateVehicle(&vehicle); err != nil {
-		if err.Error() == "車牌 "+input.LicensePlate+" 已被使用" {
-			ErrorResponse(c, http.StatusConflict, "此車牌已被其他會員註冊", err.Error())
+		if err.Error() == "LicensePlate "+input.LicensePlate+" Already used" {
+			ErrorResponse(c, http.StatusConflict, "This LicensePlate Already used", err.Error())
 		} else {
-			ErrorResponse(c, http.StatusBadRequest, "新增車輛失敗", err.Error())
+			ErrorResponse(c, http.StatusBadRequest, "Vehicle created failed", err.Error())
 		}
 		return
 	}
 
-	SuccessResponse(c, http.StatusCreated, "車輛新增成功", vehicle.ToResponse())
+	SuccessResponse(c, http.StatusCreated, "Vehicle created successfully", vehicle.ToResponse())
 }
 
 // UpdateVehicle 修改車輛（用 JSON 傳 license_plate）
@@ -108,7 +108,7 @@ func UpdateVehicle(c *gin.Context) {
 
 	var updated models.Vehicle
 	database.DB.Where("license_plate = ? AND member_id = ?", input.LicensePlate, memberID).First(&updated)
-	SuccessResponse(c, http.StatusOK, "車輛更新成功", updated.ToResponse())
+	SuccessResponse(c, http.StatusOK, "Vehicle updated successfully", updated.ToResponse())
 }
 
 // DeleteVehicle 刪除車輛（用 JSON 傳 license_plate）
@@ -146,7 +146,7 @@ func DeleteVehicle(c *gin.Context) {
 		}
 	}()
 
-	SuccessResponse(c, http.StatusOK, "車輛刪除成功", nil)
+	SuccessResponse(c, http.StatusOK, "Vehicle deleted successfully", nil)
 }
 
 // SetDefaultVehicle 設為預設車輛（用 JSON 傳 license_plate）

@@ -30,7 +30,7 @@ type VehicleResponse struct {
 	Model        string `json:"model,omitempty"`
 	Color        string `json:"color,omitempty"`
 	IsDefault    bool   `json:"is_default"`
-	CreatedAt    string `json:"created_at"`
+	// CreatedAt    string `json:"created_at"`
 }
 
 func (v *Vehicle) ToResponse() VehicleResponse {

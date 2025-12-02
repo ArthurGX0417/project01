@@ -171,6 +171,22 @@ func GetTotalCostByLicensePlate(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "查詢成功", gin.H{"total_cost": totalCost})
 }
 
+// GetTotalCost 給 APP 用的「查我總消費」
+func GetTotalCost(c *gin.Context) {
+	memberID := c.GetInt("member_id")
+
+	totalCost, err := services.GetTotalCostByMemberID(memberID)
+	if err != nil {
+		log.Printf("Failed to get total cost for member_id=%d: %v", memberID, err)
+		ErrorResponse(c, http.StatusInternalServerError, "Failed to retrieve total cost", err.Error())
+		return
+	}
+
+	SuccessResponse(c, http.StatusOK, "Total cost retrieved successfully", gin.H{
+		"total_cost": totalCost, // 單位：台幣，float64
+	})
+}
+
 // CheckParkingAvailability 查詢特定停車場總可用位子
 func CheckParkingAvailability(c *gin.Context) {
 	parkingLotIDStr := c.Param("id") // 從路徑取 :id

@@ -323,7 +323,7 @@ func Path(router *gin.RouterGroup) {
 				rentWithAuth.POST("/leave", RoleMiddleware("renter"), handlers.LeaveParkingSpot)                            //離開結算（車牌掃描輸入）
 				rentWithAuth.GET("/currently-rented", RoleMiddleware("renter"), handlers.GetCurrentlyRentedSpots)           //查詢當前租用的車位
 				rentWithAuth.GET("", RoleMiddleware("renter"), handlers.GetRentRecordsByMember)                             //查詢租用紀錄
-				rentWithAuth.GET("/total-cost", RoleMiddleware("renter"), handlers.GetTotalCostByLicensePlate)              //查詢總費用
+				rentWithAuth.GET("/total-cost", RoleMiddleware("renter"), handlers.GetTotalCost)                            //查詢總費用
 				rentWithAuth.GET("/availability", RoleMiddleware("renter", "admin"), handlers.CheckParkingAvailability)     //查詢全部停車場可用位子
 				rentWithAuth.GET("/availability/:id", RoleMiddleware("renter", "admin"), handlers.CheckParkingAvailability) //查詢特定停車場可用位子
 			}

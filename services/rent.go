@@ -203,3 +203,20 @@ func GetTotalCostByLicensePlate(licensePlate string) (float64, error) {
 	log.Printf("license_plate %s total_cost：%.0f $", licensePlate, total)
 	return total, nil
 }
+
+// GetTotalCostByMemberID 計算該會員所有車輛的歷史總消費（APP 端主要使用）
+func GetTotalCostByMemberID(memberID int) (float64, error) {
+	var total float64
+
+	err := database.DB.Model(&models.Rent{}).
+		Where("member_id = ? AND end_time IS NOT NULL", memberID).
+		Select("COALESCE(SUM(total_cost), 0)").
+		Scan(&total).Error
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to query total cost for member %d: %w", memberID, err)
+	}
+
+	log.Printf("MemberID %d total parking cost: %.0f TWD", memberID, total)
+	return total, nil
+}

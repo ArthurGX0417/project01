@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"project01/database"
 	"project01/models"
 	"project01/services"
 	"strconv"
@@ -231,21 +232,30 @@ func DeleteParkingLot(c *gin.Context) {
 	SuccessResponse(c, http.StatusOK, "刪除成功", nil)
 }
 
-// GetAllParkingLots 查詢所有停車場（限 admin）
+// GetAllParkingLots 查詢所有停車場
 func GetAllParkingLots(c *gin.Context) {
-	parkingLots, err := services.GetAllParkingLots()
-	if err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, "查詢所有停車場失敗", err.Error())
+	var lots []models.ParkingLot
+	if err := database.DB.Find(&lots).Error; err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Failed to query parking lots", err.Error())
 		return
 	}
 
-	parkingLotResponses := make([]models.ParkingLotResponse, len(parkingLots))
-	for i, parkingLot := range parkingLots {
-		parkingLotResponses[i] = parkingLot.ToResponse()
+	// 關鍵：每一筆都要計算剩餘車位！
+	for i := range lots {
+		available, _ := services.CheckParkingAvailability(lots[i].ParkingLotID)
+		remaining := int(available)
+		if remaining < 0 {
+			remaining = 0
+		}
+		lots[i].RemainingSpots = remaining
 	}
 
-	SuccessResponse(c, http.StatusOK, "查詢成功", parkingLotResponses)
-	log.Printf("Successfully retrieved %d parking lots for admin", len(parkingLots))
+	responses := make([]models.ParkingLotResponse, len(lots))
+	for i, lot := range lots {
+		responses[i] = lot.ToResponse()
+	}
+
+	SuccessResponse(c, http.StatusOK, "Query successful", responses)
 }
 
 // handlers/parking.go → 直接整個取代您原本的 GetParkingIncome
